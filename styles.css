@@ -459,7 +459,7 @@ body.interactive .node { cursor: pointer; }
 .ctl:hover { background: var(--panel-2); color: var(--text); }
 .ctl svg { width: 17px; height: 17px; }
 
-.ctl-toggle[aria-pressed="true"] {
+.ctl-toggle[aria-checked="true"] {
   color: var(--teal);
   background: rgba(95, 227, 201, 0.1);
   border-color: rgba(95, 227, 201, 0.4);

@@ -85,7 +85,8 @@ function freezeNormalizeEdgeMeta(edge) {
     || (touchesSubject ? 'core' : (kind === 'membership' ? 'strong' : 'related'));
   const strength = freezeNodeText(edge && edge.strength)
     || (tier === 'core' ? 'high' : tier === 'strong' ? 'medium' : 'low');
-  const evidence = freezeNodeText(edge && (edge.evidence ?? edge.source ?? edge.note));
+  // Never treat endpoint fields (source/target/from/to) as evidence.
+  const evidence = freezeNodeText(edge && (edge.evidence ?? edge.note ?? edge.citation));
   return {
     tier,
     strength,
@@ -221,9 +222,10 @@ function freezeDescribeHop(edge, model, fromId, toId) {
   const targetId = toId || storedTargetId;
   const fromName = freezeNodeName(model.byId.get(sourceId)) || sourceId;
   const toName = freezeNodeName(model.byId.get(targetId)) || targetId;
-  const meta = `${edge.label} · ${edge.tier}/${edge.strength}`;
-  const evidence = edge.evidence ? ` — ${edge.evidence}` : '';
-  return `${fromName} → ${toName}: ${meta}${evidence}`;
+  const meta = freezeNormalizeEdgeMeta(edge);
+  const bits = `${meta.label || edge.label} · ${meta.tier}/${meta.strength}`;
+  const evidence = meta.evidence ? ` — ${meta.evidence}` : '';
+  return `${fromName} → ${toName}: ${bits}${evidence}`;
 }
 
 function freezePathSummary(node, model, path) {
@@ -916,7 +918,8 @@ if (typeof document !== 'undefined') {
       return n.neighbors.map((e) => {
         const other = byId.get(e.from === id ? e.to : e.from);
         const meta = `${e.label} · ${e.tier}/${e.strength}`;
-        return { other, text: `${other.name} — ${meta}` };
+        const evidence = e.evidence ? ` — ${e.evidence}` : '';
+        return { other, text: `${other.name} — ${meta}${evidence}` };
       }).sort((a, b) => a.other.name.localeCompare(b.other.name));
     }
 
@@ -1150,7 +1153,7 @@ if (typeof document !== 'undefined') {
     function toggleInteractive() {
       ui.interactive = !ui.interactive;
       document.body.classList.toggle('interactive', ui.interactive);
-      document.getElementById('btn-interact').setAttribute('aria-pressed', String(ui.interactive));
+      document.getElementById('btn-interact').setAttribute('aria-checked', String(ui.interactive));
       showToast(ui.interactive ? 'Interactivity on — drag cards to rearrange.' : 'Interactivity off — cards locked in place.');
     }
 
