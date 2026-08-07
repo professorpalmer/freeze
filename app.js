@@ -13,6 +13,593 @@
 'use strict';
 
 /* ---------------------------------------------------------------------------
+   Search, selection details, and shortest-path enhancement.
+--------------------------------------------------------------------------- */
+
+function freezeIndexBoardBridge() {
+  return typeof window !== 'undefined' && window.__freezeIndexBoard;
+}
+
+function freezeGraphNodes() {
+  let source = [];
+  if (typeof NODES !== 'undefined') source = NODES;
+  else if (typeof nodes !== 'undefined') source = nodes;
+  else if (typeof NODE_DATA !== 'undefined') source = NODE_DATA;
+  if (Array.isArray(source)) return source;
+  return source && typeof source === 'object' ? Object.values(source) : [];
+}
+
+function freezeNodeText(value) {
+  if (Array.isArray(value)) return value.map(freezeNodeText).filter(Boolean).join(', ');
+  if (value && typeof value === 'object') return freezeNodeText(value.name || value.label || value.id);
+  return value == null ? '' : String(value);
+}
+
+function freezeNodeId(node) {
+  return freezeNodeText(node && (node.id ?? node.key ?? node.slug ?? node.name));
+}
+
+function freezeNodeName(node) {
+  return freezeNodeText(node && (node.name ?? node.label ?? node.title ?? node.id));
+}
+
+function freezeNodeAffiliation(node) {
+  return freezeNodeText(node && (node.affiliation ?? node.affiliations ?? node.group ?? node.organization));
+}
+
+function freezeNodeType(node) {
+  const type = freezeNodeText(node && (node.type ?? node.kind ?? node.category));
+  if (type && typeof TYPES !== 'undefined' && TYPES[type] && TYPES[type].label) return TYPES[type].label;
+  return type || 'Node';
+}
+
+function freezeEdgeEndpoint(edge, side) {
+  const alternate = side === 'source' ? 'from' : 'to';
+  const fallback = side === 'source' ? 0 : 1;
+  const value = edge && (edge[side] ?? edge[alternate] ?? edge[side === 'source' ? 'a' : 'b'] ?? edge[fallback]);
+  return freezeNodeText(value && typeof value === 'object' ? (value.id ?? value.key ?? value.name) : value);
+}
+
+function freezeEdgeLabel(edge) {
+  return freezeNodeText(edge && (edge.relationship ?? edge.relation ?? edge.label ?? edge.kind ?? edge.type)) || 'connected to';
+}
+
+function freezeGraphModel() {
+  const nodes = freezeGraphNodes();
+  const byId = new Map();
+  const byName = new Map();
+  nodes.forEach((node, index) => {
+    const id = freezeNodeId(node) || String(index);
+    byId.set(id, node);
+    const name = freezeNodeName(node);
+    if (name) byName.set(name.toLowerCase(), node);
+  });
+  const adjacency = new Map(nodes.map((node, index) => [freezeNodeId(node) || String(index), []]));
+  const edges = [];
+  const rawEdges = typeof EDGES !== 'undefined' && Array.isArray(EDGES) ? EDGES : [];
+  rawEdges.forEach((edge) => {
+    const rawSource = freezeEdgeEndpoint(edge, 'source');
+    const rawTarget = freezeEdgeEndpoint(edge, 'target');
+    const sourceNode = byId.get(rawSource) || byName.get(rawSource.toLowerCase());
+    const targetNode = byId.get(rawTarget) || byName.get(rawTarget.toLowerCase());
+    if (!sourceNode || !targetNode) return;
+    const normalized = {
+      source: freezeNodeId(sourceNode),
+      target: freezeNodeId(targetNode),
+      label: freezeEdgeLabel(edge),
+    };
+    edges.push(normalized);
+    if (!adjacency.has(normalized.source)) adjacency.set(normalized.source, []);
+    if (!adjacency.has(normalized.target)) adjacency.set(normalized.target, []);
+    adjacency.get(normalized.source).push({ id: normalized.target, edge: normalized });
+    adjacency.get(normalized.target).push({ id: normalized.source, edge: normalized });
+  });
+  return { nodes, byId, byName, adjacency, edges };
+}
+
+function freezeResolveNode(value, model) {
+  if (!value) return null;
+  if (typeof value === 'object') {
+    const id = freezeNodeId(value);
+    if (model.byId.has(id)) return model.byId.get(id);
+    const name = freezeNodeName(value).toLowerCase();
+    return model.byName.get(name) || null;
+  }
+  const text = String(value);
+  return model.byId.get(text) || model.byName.get(text.toLowerCase()) || null;
+}
+
+function freezeShortestPath(model, start) {
+  const josh = model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese')
+    || model.nodes.find((node) => /josh[-_ ]freese/i.test(freezeNodeId(node)));
+  if (!start || !josh) return { target: josh, nodes: [], edges: [], disconnected: true };
+  const startId = freezeNodeId(start);
+  const targetId = freezeNodeId(josh);
+  if (startId === targetId) return { target: josh, nodes: [start], edges: [], disconnected: false };
+
+  const previous = new Map([[startId, null]]);
+  const via = new Map();
+  const queue = [startId];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    if (current === targetId) break;
+    (model.adjacency.get(current) || []).forEach(({ id, edge }) => {
+      if (previous.has(id)) return;
+      previous.set(id, current);
+      via.set(id, edge);
+      queue.push(id);
+    });
+  }
+  if (!previous.has(targetId)) return { target: josh, nodes: [start], edges: [], disconnected: true };
+
+  const pathIds = [];
+  const pathEdges = [];
+  let cursor = targetId;
+  while (cursor != null) {
+    pathIds.unshift(cursor);
+    if (via.has(cursor)) pathEdges.unshift(via.get(cursor));
+    cursor = previous.get(cursor);
+  }
+  return {
+    target: josh,
+    nodes: pathIds.map((id) => model.byId.get(id)).filter(Boolean),
+    edges: pathEdges,
+    disconnected: false,
+  };
+}
+
+function freezeNodeCoordinates(node, element) {
+  const position = node && (node.position || node.coordinates);
+  let x = node && (node.x ?? node.cx ?? node.fx ?? (position && position.x));
+  let y = node && (node.y ?? node.cy ?? node.fy ?? (position && position.y));
+  if ((!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) && element) {
+    const match = String(element.getAttribute('transform') || '').match(/translate\\(\\s*(-?\\d+(?:\\.\\d+)?)[,\\s]+(-?\\d+(?:\\.\\d+)?)\\s*\\)/);
+    if (match) {
+      x = match[1];
+      y = match[2];
+    }
+  }
+  return { x: Number(x), y: Number(y) };
+}
+
+function freezeFindSvg() {
+  return document.querySelector('svg');
+}
+
+function freezeFindNodeElement(svg, node) {
+  if (!svg || !node) return null;
+  const id = freezeNodeId(node);
+  const name = freezeNodeName(node);
+  const elements = svg.querySelectorAll('[data-node-id], [data-id], [data-node], [id], .node');
+  for (const element of elements) {
+    const values = [
+      element.getAttribute('data-node-id'),
+      element.getAttribute('data-id'),
+      element.getAttribute('data-node'),
+      element.getAttribute('id'),
+      element.getAttribute('data-name'),
+    ].filter(Boolean).map(String);
+    if (values.includes(id) || values.includes(`node-${id}`) || values.includes(`node_${id}`) || values.includes(name)) return element;
+  }
+  return null;
+}
+
+function freezeFindScene(svg, nodeElement) {
+  if (nodeElement) {
+    let parent = nodeElement.parentElement;
+    while (parent && parent !== svg) {
+      if (parent.tagName && parent.tagName.toLowerCase() === 'g' && parent.hasAttribute('transform')) return parent;
+      parent = parent.parentElement;
+    }
+    if (nodeElement.parentElement) return nodeElement.parentElement;
+  }
+  return svg && (svg.querySelector('g[transform]') || svg.querySelector('g') || svg);
+}
+
+function freezeClearElement(element) {
+  while (element && element.firstChild) element.removeChild(element.firstChild);
+}
+
+function freezeSvgElement(name, attributes) {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+  return element;
+}
+
+function freezeHighlightPath(model, path) {
+  const svg = freezeFindSvg();
+  if (!svg) return;
+  const firstElement = path.nodes.map((node) => freezeFindNodeElement(svg, node)).find(Boolean);
+  const scene = freezeFindScene(svg, firstElement);
+  if (!scene) return;
+  let layer = scene.querySelector(':scope > [data-freeze-shortest-path]');
+  if (!layer) {
+    layer = freezeSvgElement('g', {
+      'data-freeze-shortest-path': 'true',
+      'aria-hidden': 'true',
+      'pointer-events': 'none',
+    });
+    scene.appendChild(layer);
+  }
+  freezeClearElement(layer);
+
+  const coordinates = new Map();
+  path.nodes.forEach((node) => {
+    const point = freezeNodeCoordinates(node, freezeFindNodeElement(svg, node));
+    if (Number.isFinite(point.x) && Number.isFinite(point.y)) coordinates.set(freezeNodeId(node), point);
+  });
+  path.edges.forEach((edge) => {
+    const source = coordinates.get(edge.source);
+    const target = coordinates.get(edge.target);
+    if (!source || !target) return;
+    layer.appendChild(freezeSvgElement('line', {
+      class: 'freeze-shortest-path-edge',
+      'data-shortest-path-edge': `${edge.source}-${edge.target}`,
+      x1: source.x,
+      y1: source.y,
+      x2: target.x,
+      y2: target.y,
+      stroke: '#ffe082',
+      'stroke-width': 12,
+      'stroke-linecap': 'round',
+      opacity: 0.95,
+    }));
+  });
+  path.nodes.forEach((node) => {
+    const point = coordinates.get(freezeNodeId(node));
+    if (!point) return;
+    layer.appendChild(freezeSvgElement('circle', {
+      class: 'freeze-shortest-path-node',
+      'data-shortest-path-node': freezeNodeId(node),
+      cx: point.x,
+      cy: point.y,
+      r: 25,
+      fill: 'none',
+      stroke: '#ffe082',
+      'stroke-width': 5,
+      opacity: 0.98,
+    }));
+  });
+
+  svg.querySelectorAll('[data-shortest-path-node="true"], [data-shortest-path-node="false"]').forEach((element) => {
+    element.removeAttribute('data-shortest-path-node');
+  });
+  path.nodes.forEach((node) => {
+    const element = freezeFindNodeElement(svg, node);
+    if (element) element.setAttribute('data-shortest-path-node', 'true');
+  });
+}
+
+function freezeReadoutElement() {
+  const selectors = [
+    '#readout', '#detail-readout', '#node-readout', '#selection-readout',
+    '#node-detail', '#details', '#detail', '#status', '[data-readout]',
+  ];
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element) return element;
+  }
+  const marked = Array.from(document.querySelectorAll('[id], [class]')).find((element) => {
+    const marker = `${element.id || ''} ${element.className || ''}`.toLowerCase();
+    return /readout|detail|selection|status/.test(marker) && element.tagName.toLowerCase() !== 'body';
+  });
+  return marked || null;
+}
+
+function freezeUpdateReadout(node, model) {
+  if (!node) return;
+  const path = freezeShortestPath(model, node);
+  const existing = freezeReadoutElement();
+  const host = existing || document.body;
+  let extension = host.querySelector('[data-freeze-selection-details]');
+  if (!extension) {
+    extension = document.createElement('section');
+    extension.setAttribute('data-freeze-selection-details', 'true');
+    extension.setAttribute('aria-live', 'polite');
+    extension.setAttribute('aria-atomic', 'true');
+    extension.style.marginTop = '10px';
+    extension.style.paddingTop = '10px';
+    extension.style.borderTop = '1px solid rgba(255,255,255,.16)';
+    host.appendChild(extension);
+  }
+  freezeClearElement(extension);
+
+  const heading = document.createElement('h3');
+  heading.textContent = `${freezeNodeName(node)} details`;
+  heading.style.margin = '0 0 6px';
+  heading.style.fontSize = '12px';
+  extension.appendChild(heading);
+  const summary = document.createElement('p');
+  summary.style.margin = '3px 0';
+  summary.textContent = `Type: ${freezeNodeType(node)} · Affiliation: ${freezeNodeAffiliation(node) || 'Not listed'}`;
+  extension.appendChild(summary);
+  const adjacency = model.adjacency.get(freezeNodeId(node)) || [];
+  const connections = document.createElement('p');
+  connections.style.margin = '3px 0';
+  connections.textContent = `Direct connections: ${adjacency.length}`;
+  extension.appendChild(connections);
+
+  const connectionList = document.createElement('ul');
+  connectionList.style.margin = '5px 0 8px';
+  connectionList.style.paddingLeft = '18px';
+  if (!adjacency.length) {
+    const item = document.createElement('li');
+    item.textContent = 'None';
+    connectionList.appendChild(item);
+  } else {
+    adjacency.forEach(({ id, edge }) => {
+      const item = document.createElement('li');
+      item.textContent = `${freezeNodeName(model.byId.get(id))} — ${edge.label}`;
+      connectionList.appendChild(item);
+    });
+  }
+  extension.appendChild(connectionList);
+
+  const pathText = document.createElement('p');
+  pathText.style.margin = '3px 0';
+  if (!path.target) {
+    pathText.textContent = 'Josh Freese is not present in this graph.';
+  } else if (path.disconnected) {
+    pathText.textContent = `${freezeNodeName(node)} is disconnected from Josh Freese.`;
+  } else {
+    const names = path.nodes.map(freezeNodeName).join(' → ');
+    pathText.textContent = `Path to Josh Freese: ${names} (${path.nodes.length - 1} jumps)`;
+  }
+  extension.appendChild(pathText);
+}
+
+function freezeRenderGraph() {
+  const bridge = freezeIndexBoardBridge();
+  if (bridge && typeof bridge.render === 'function') {
+    try { bridge.render(); return; } catch (error) { /* fall through to legacy hooks */ }
+  }
+  if (typeof render === 'function') {
+    try { render(); } catch (error) { /* preserve the existing renderer's behavior */ }
+  } else if (typeof renderGraph === 'function') {
+    try { renderGraph(); } catch (error) { /* preserve the existing renderer's behavior */ }
+  }
+}
+
+function freezeExistingFocus(node) {
+  const candidates = [];
+  const bridge = freezeIndexBoardBridge();
+  if (bridge) {
+    if (typeof bridge.centerNode === 'function') candidates.push(bridge.centerNode.bind(bridge));
+    if (typeof bridge.focusNode === 'function') candidates.push(bridge.focusNode.bind(bridge));
+    if (typeof bridge.centerOnNode === 'function') candidates.push(bridge.centerOnNode.bind(bridge));
+  }
+  if (typeof focusNode === 'function') candidates.push(focusNode);
+  if (typeof centerOnNode === 'function') candidates.push(centerOnNode);
+  if (typeof centerNodeInView === 'function') candidates.push(centerNodeInView);
+  if (typeof panToNode === 'function') candidates.push(panToNode);
+  for (const focus of candidates) {
+    try {
+      focus(freezeNodeId(node) || node.id);
+      return true;
+    } catch (error) {
+      try {
+        focus(node);
+        return true;
+      } catch (ignored) {
+        // Try the next existing focus helper, then use the SVG transform fallback.
+      }
+    }
+  }
+  return false;
+}
+
+function freezeCenterNode(node) {
+  if (freezeExistingFocus(node)) return;
+  const svg = freezeFindSvg();
+  const element = freezeFindNodeElement(svg, node);
+  const scene = freezeFindScene(svg, element);
+  if (!svg || !element || !scene || !element.getBoundingClientRect) return;
+  const svgRect = svg.getBoundingClientRect();
+  const nodeRect = element.getBoundingClientRect();
+  if (!svgRect.width || !svgRect.height || !nodeRect.width || !nodeRect.height) return;
+  const dx = svgRect.left + svgRect.width / 2 - (nodeRect.left + nodeRect.width / 2);
+  const dy = svgRect.top + svgRect.height / 2 - (nodeRect.top + nodeRect.height / 2);
+  const matrix = scene.getScreenCTM && scene.getScreenCTM();
+  const scaleX = matrix && Math.abs(matrix.a) > 0 ? Math.abs(matrix.a) : 1;
+  const scaleY = matrix && Math.abs(matrix.d) > 0 ? Math.abs(matrix.d) : 1;
+  const transform = scene.getAttribute('transform') || '';
+  const match = transform.match(/translate\\(\\s*(-?\\d+(?:\\.\\d+)?)(?:[,\\s]+(-?\\d+(?:\\.\\d+)?))?\\s*\\)/);
+  if (!match) return;
+  const tx = Number(match[1]) + dx / scaleX;
+  const ty = Number(match[2] || 0) + dy / scaleY;
+  scene.setAttribute('transform', transform.replace(match[0], `translate(${tx} ${ty})`));
+}
+
+function freezeBuildSearchPanel(model, activate) {
+  let panel = document.getElementById('freeze-search-panel');
+  if (panel) return panel;
+  panel = document.createElement('aside');
+  panel.id = 'freeze-search-panel';
+  panel.setAttribute('aria-label', 'Search graph');
+  Object.assign(panel.style, {
+    position: 'fixed',
+    top: '76px',
+    left: '16px',
+    zIndex: '20',
+    width: 'min(320px, calc(100vw - 32px))',
+    boxSizing: 'border-box',
+    padding: '12px',
+    color: '#f5f7fb',
+    background: 'rgba(17, 23, 35, .96)',
+    border: '1px solid rgba(255,255,255,.2)',
+    borderRadius: '10px',
+    boxShadow: '0 12px 30px rgba(0,0,0,.3)',
+    font: '12px/1.4 system-ui, sans-serif',
+  });
+  const label = document.createElement('label');
+  label.htmlFor = 'freeze-search-input';
+  label.textContent = 'Search people, bands, and projects';
+  label.style.display = 'block';
+  label.style.fontWeight = '600';
+  label.style.marginBottom = '6px';
+  panel.appendChild(label);
+  const input = document.createElement('input');
+  input.id = 'freeze-search-input';
+  input.type = 'search';
+  input.autocomplete = 'off';
+  input.placeholder = 'Name or affiliation';
+  input.setAttribute('aria-controls', 'freeze-search-results');
+  input.style.width = '100%';
+  input.style.boxSizing = 'border-box';
+  input.style.padding = '7px 8px';
+  input.style.color = '#111827';
+  input.style.background = '#fff';
+  input.style.border = '1px solid #b8c1d1';
+  input.style.borderRadius = '6px';
+  panel.appendChild(input);
+  const results = document.createElement('ul');
+  results.id = 'freeze-search-results';
+  results.setAttribute('role', 'listbox');
+  results.setAttribute('aria-live', 'polite');
+  results.setAttribute('aria-label', 'Search results');
+  results.style.listStyle = 'none';
+  results.style.maxHeight = '240px';
+  results.style.overflowY = 'auto';
+  results.style.margin = '8px 0 0';
+  results.style.padding = '0';
+  panel.appendChild(results);
+  document.body.appendChild(panel);
+
+  const renderResults = () => {
+    freezeClearElement(results);
+    const query = input.value.trim().toLowerCase();
+    const matches = model.nodes.filter((node) => {
+      const haystack = `${freezeNodeName(node)} ${freezeNodeAffiliation(node)}`.toLowerCase();
+      return !query || haystack.includes(query);
+    });
+    results.setAttribute('aria-label', `${matches.length} search result${matches.length === 1 ? '' : 's'}`);
+    if (!matches.length) {
+      const empty = document.createElement('li');
+      empty.textContent = 'No matching nodes';
+      empty.style.padding = '6px 4px';
+      results.appendChild(empty);
+      return;
+    }
+    matches.forEach((node) => {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = freezeNodeName(node);
+      button.setAttribute('aria-label', `${freezeNodeName(node)}${freezeNodeAffiliation(node) ? `, ${freezeNodeAffiliation(node)}` : ''}`);
+      button.style.display = 'block';
+      button.style.width = '100%';
+      button.style.padding = '6px 4px';
+      button.style.textAlign = 'left';
+      button.style.color = '#f5f7fb';
+      button.style.background = 'transparent';
+      button.style.border = '0';
+      button.style.borderRadius = '4px';
+      button.style.cursor = 'pointer';
+      const affiliation = freezeNodeAffiliation(node);
+      button.title = affiliation ? `${freezeNodeType(node)} · ${affiliation}` : freezeNodeType(node);
+      button.addEventListener('click', () => activate(node));
+      item.appendChild(button);
+      results.appendChild(item);
+    });
+  };
+  input.addEventListener('input', renderResults);
+  renderResults();
+  return panel;
+}
+
+function freezeStartEnhancements() {
+  if (document.getElementById('freeze-search-panel')) return;
+  const model = freezeGraphModel();
+  let selected = null;
+  const readSelection = () => {
+    const bridge = freezeIndexBoardBridge();
+    if (bridge && typeof bridge.getSelectedNode === 'function') {
+      const fromBridge = freezeResolveNode(bridge.getSelectedNode(), model);
+      if (fromBridge) return fromBridge;
+    }
+    const candidates = [];
+    if (typeof selectedNode !== 'undefined') candidates.push(selectedNode);
+    if (typeof selectedNodeId !== 'undefined') candidates.push(selectedNodeId);
+    if (typeof selectedId !== 'undefined') candidates.push(selectedId);
+    if (typeof activeNode !== 'undefined') candidates.push(activeNode);
+    if (typeof currentNode !== 'undefined') candidates.push(currentNode);
+    for (const candidate of candidates) {
+      const node = freezeResolveNode(candidate, model);
+      if (node) return node;
+    }
+    return selected;
+  };
+  const refresh = (node) => {
+    const next = freezeResolveNode(node, model) || readSelection();
+    if (!next) return;
+    selected = next;
+    freezeUpdateReadout(next, model);
+    freezeHighlightPath(model, freezeShortestPath(model, next));
+  };
+  const bridge = freezeIndexBoardBridge();
+  let originalSelectNode = null;
+  let hooked = false;
+  if (bridge && typeof bridge.selectNode === 'function') {
+    originalSelectNode = bridge.selectNode.bind(bridge);
+    bridge.selectNode = function enhancedSelectNode(nodeOrId) {
+      const result = originalSelectNode.apply(this, arguments);
+      const node = freezeResolveNode(nodeOrId, model) || readSelection();
+      setTimeout(() => refresh(node), 0);
+      return result;
+    };
+    hooked = true;
+  } else if (typeof selectNode === 'function') {
+    originalSelectNode = selectNode;
+    const enhancedSelectNode = function enhancedSelectNode(nodeOrId) {
+      const result = originalSelectNode.apply(this, arguments);
+      const node = freezeResolveNode(nodeOrId, model) || readSelection();
+      setTimeout(() => refresh(node), 0);
+      return result;
+    };
+    try {
+      selectNode = enhancedSelectNode;
+      hooked = true;
+    } catch (error) {
+      // A const-bound selector is still used directly by the search activation below.
+    }
+  }
+  const activate = (node) => {
+    const liveBridge = freezeIndexBoardBridge();
+    if (liveBridge && typeof liveBridge.selectNode === 'function') {
+      liveBridge.selectNode(freezeNodeId(node));
+    } else if (hooked && typeof selectNode === 'function') {
+      selectNode(freezeNodeId(node));
+    } else if (originalSelectNode) {
+      originalSelectNode.call(null, freezeNodeId(node));
+    } else if (typeof selectNode === 'function') {
+      selectNode(freezeNodeId(node));
+    }
+    freezeRenderGraph();
+    freezeCenterNode(node);
+    refresh(node);
+  };
+  freezeBuildSearchPanel(model, activate);
+  const svg = freezeFindSvg();
+  if (svg) {
+    svg.addEventListener('click', (event) => {
+      const target = event.target && event.target.closest ? event.target.closest('[data-node-id], [data-id], [data-node], .node') : null;
+      if (!target) return;
+      setTimeout(() => refresh(readSelection() || freezeResolveNode(target.getAttribute('data-node-id') || target.getAttribute('data-id'), model)), 0);
+    });
+  }
+  refresh(readSelection() || model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese'));
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(freezeStartEnhancements, 0), { once: true });
+  } else {
+    setTimeout(freezeStartEnhancements, 0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Graph data — representative, illustrative, hand-authored locally.
    (Public facts about Josh Freese's career; nothing scraped from RedString.)
    Coordinates live in a 2000 x 1400 world space; chips are placed so the
@@ -261,6 +848,8 @@ if (typeof document !== 'undefined') {
       for (const n of sorted) {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'node' + (n.big ? ' big' : ''));
+        g.setAttribute('data-node-id', n.id);
+        g.setAttribute('id', n.id);
         g.setAttribute('transform', `translate(${n.x},${n.y})`);
         g.setAttribute('role', 'group');
         g.setAttribute('aria-label', `${n.name} — ${n.role}`);
@@ -666,6 +1255,27 @@ if (typeof document !== 'undefined') {
       index.appendChild(li);
     }
 
+    function centerNode(idOrNode) {
+      const id = typeof idOrNode === 'string' || typeof idOrNode === 'number'
+        ? String(idOrNode)
+        : (idOrNode && idOrNode.id);
+      const n = id ? byId.get(id) : null;
+      if (!n) return;
+      const cw = svg.clientWidth || 0;
+      const ch = svg.clientHeight || 0;
+      if (!cw || !ch) return;
+      view.tx = cw / 2 - n.cx * view.scale;
+      view.ty = ch / 2 - n.cy * view.scale;
+      clampPan();
+      applyTransform();
+      view.fitted = true;
+    }
+
+    function renderBoard() {
+      renderEdges();
+      renderLabels();
+    }
+
     /* ================= boot ================= */
 
     buildNodes();
@@ -673,6 +1283,13 @@ if (typeof document !== 'undefined') {
     renderLabels();
     fitView();
     updateReadout(null);
+
+    window.__freezeIndexBoard = {
+      selectNode: (id) => selectNode(id),
+      getSelectedNode: () => (ui.selected ? byId.get(ui.selected) || ui.selected : null),
+      centerNode,
+      render: renderBoard,
+    };
 
     let resizeTimer = null;
     window.addEventListener('resize', () => {
