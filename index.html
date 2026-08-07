@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Freese Index — an independent, offline mockup of a RedString-style investigation board mapping Josh Freese and his collaborators. No network requests, no auth.">
+  <title>Freese Index · Independent Mockup</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230b0e15'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='%23ff5c7a'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="no-active">
+
+  <a class="skip-link" href="#graph">Skip to the board graph</a>
+
+  <!-- ============ TOP CHROME ============ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="btn-back" class="btn btn-ghost" type="button" aria-label="Back">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Back</span>
+      </button>
+    </div>
+
+    <div class="topbar-center">
+      <h1 class="board-title">FREESE INDEX</h1>
+      <p class="board-sub">Independent mockup · not affiliated with RedString</p>
+    </div>
+
+    <div class="topbar-right">
+      <span class="badge badge-viewonly">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7.5" width="9" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7.5V5.8a2.5 2.5 0 0 1 5 0v1.7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10.6" r="1.1" fill="currentColor"/></svg>
+        <span>VIEW ONLY</span>
+      </span>
+      <button id="btn-dim" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Dim strings (edges)">
+        <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
+        <span class="toggle-label">Dim strings</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============ BOARD SURFACE ============ -->
+  <main class="board" id="board">
+    <svg id="graph" tabindex="0" role="img"
+         aria-label="Freese Index board. A dark investigation canvas with Josh Freese at the center, connected by red strings to bands, artists, and projects: Foo Fighters, A Perfect Circle, Nine Inch Nails, Devo, The Vandals, Guns N' Roses, Weezer, Suicidal Tendencies, Sting, and others. Pan with drag or arrow keys, zoom with the controls or the mouse wheel. Use the hidden node list after the board to focus each subject.">
+      <defs>
+        <pattern id="dots" width="30" height="30" patternUnits="userSpaceOnUse">
+          <circle cx="1.6" cy="1.6" r="1.6" fill="#1a2132"/>
+        </pattern>
+        <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="6" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <g id="world">
+        <rect id="board-bg" width="2000" height="1400" fill="url(#dots)"/>
+        <path id="edges" class="strings"></path>
+        <path id="edges-active" class="strings strings-active"></path>
+        <g id="edge-labels"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+
+    <div class="vignette" aria-hidden="true"></div>
+
+    <!-- Floating view controls -->
+    <div class="zoomctl" role="group" aria-label="View controls">
+      <button id="btn-zoom-in" class="ctl" type="button" aria-label="Zoom in" title="Zoom in (or press +)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.4 10.4 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7 5.2v3.6M5.2 7h3.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <div class="zoom-pct" id="zoom-pct">100%</div>
+      <button id="btn-zoom-out" class="ctl" type="button" aria-label="Zoom out" title="Zoom out (or press −)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.4 10.4 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M5.2 7h3.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-fit" class="ctl" type="button" aria-label="Fit view to board" title="Fit view (or press F)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3H3v2M11 3h2v2M13 11v2h-2M5 13H3v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-interact" class="ctl ctl-toggle" type="button" role="switch" aria-pressed="false" aria-label="Toggle interactivity (allow dragging nodes)" title="Toggle interactivity (or press I)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v3.2M8 10.8V14M2 8h3.2M10.8 8H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 3.4 6.4 5.2h3.2L8 3.4zM8 12.6l-1.6-1.8h3.2L8 12.6zM3.4 8l1.8-1.6v3.2L3.4 8zM12.6 8l-1.8 1.6V6.4L12.6 8z" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <!-- Detail / status readout -->
+    <aside class="readout" id="readout" aria-live="polite" aria-atomic="false"></aside>
+
+    <!-- Toast feedback (local only) -->
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- ============ BOTTOM ACTION CLUSTER ============ -->
+    <footer class="actionbar">
+      <span class="actionbar-note">Independent mockup — actions are local only · no network</span>
+      <div class="actions" role="group" aria-label="Board actions">
+        <button class="btn act" type="button" data-action="report" aria-label="Report board">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3h7.6l-1.9 3 1.9 3H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M4.2 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Report board</span>
+        </button>
+        <button class="btn act" type="button" data-action="discussion" aria-label="Open discussion, 0 comments">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H8.4L4.6 14v-2.1H3a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.6" cy="7.7" r=".9" fill="currentColor"/><circle cx="8" cy="7.7" r=".9" fill="currentColor"/><circle cx="10.4" cy="7.7" r=".9" fill="currentColor"/></svg>
+          <span>Open discussion <span class="count">(0 comments)</span></span>
+        </button>
+        <button class="btn act" type="button" data-action="save" aria-label="Save board">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 3h7.2a1 1 0 0 1 1 1v9.2L8 10.8l-4.6 2.4V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span>Save board</span>
+        </button>
+        <button class="btn act" type="button" data-action="share" aria-label="Share board">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M5.6 5 8 2.6 10.4 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 8.5v3.6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Share board</span>
+        </button>
+        <button class="btn act" type="button" data-action="copy" aria-label="Copy to My Boards">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5V4a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Copy to My Boards</span>
+        </button>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Screen-reader-accessible node index (focusing a row selects the node in the graph) -->
+  <ul class="sr-only node-index" id="node-index" aria-label="Graph subjects"></ul>
+
+  <script src="app.js"></script>
+</body>
+</html>
