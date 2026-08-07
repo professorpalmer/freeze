@@ -254,7 +254,7 @@ body {
   background: radial-gradient(120% 90% at 50% 42%, transparent 55%, rgba(4, 6, 10, 0.55) 100%);
 }
 
-/* strings (edges) — all edges batched into two <path> elements */
+/* strings (edges) — batched by tier + active/path accents */
 .strings {
   fill: none;
   stroke: var(--accent);
@@ -263,12 +263,23 @@ body {
   opacity: 0.5;
   transition: opacity 0.2s ease;
 }
+.strings-tier-related { opacity: 0.34; stroke-width: 1.25; }
+.strings-tier-strong { opacity: 0.48; stroke-width: 1.45; }
+.strings-tier-core { opacity: 0.58; stroke-width: 1.7; }
 .strings-active {
   opacity: 0;
   stroke-width: 2.4;
   filter: drop-shadow(0 0 4px rgba(255, 92, 122, 0.55));
 }
 body.has-active .strings-active { opacity: 0.95; }
+.strings-path {
+  opacity: 0;
+  stroke-width: 2.15;
+  stroke: #ff7a90;
+  filter: drop-shadow(0 0 3px rgba(255, 92, 122, 0.45));
+  pointer-events: none;
+}
+body.has-active .strings-path { opacity: 0.9; }
 
 /* edge labels */
 .edge-label {
@@ -283,15 +294,19 @@ body.has-active .strings-active { opacity: 0.95; }
   transition: opacity 0.18s ease, fill 0.18s ease;
   pointer-events: none;
 }
-.edge-label.hl { fill: #ffc2cc; opacity: 1; }
+.edge-label.hl,
+.edge-label.path-hl { fill: #ffc2cc; opacity: 1; }
 body.has-active .edge-label { opacity: 0.14; }
-body.has-active .edge-label.hl { opacity: 1; }
+body.has-active .edge-label.hl,
+body.has-active .edge-label.path-hl { opacity: 1; }
 
 /* dim strings toggle */
 body.dim .strings { opacity: 0.08; }
-body.dim .strings-active { opacity: 0.9; }
+body.dim .strings-active,
+body.dim .strings-path { opacity: 0.9; }
 body.dim .edge-label { opacity: 0.1; }
-body.dim .edge-label.hl { opacity: 0.95; }
+body.dim .edge-label.hl,
+body.dim .edge-label.path-hl { opacity: 0.95; }
 
 /* ---------- nodes (chips) ---------- */
 
@@ -326,10 +341,88 @@ body.dim .edge-label.hl { opacity: 0.95; }
   filter: url(#glow);
 }
 .node.sel .lbl { fill: #ffffff; }
+.node.on-path .chip {
+  stroke: #ff8a9c;
+  stroke-opacity: 0.85;
+  stroke-width: 1.8;
+}
+.node.sel.on-path .chip {
+  stroke: var(--accent);
+  stroke-opacity: 1;
+  stroke-width: 2.6;
+}
 .node.dragging { cursor: grabbing; }
 .node.dragging .chip { stroke: var(--teal); stroke-opacity: 0.95; }
 
 body.interactive .node { cursor: pointer; }
+
+/* ---------- local search panel ---------- */
+
+.freeze-search {
+  position: fixed;
+  top: 76px;
+  left: 16px;
+  z-index: 20;
+  width: min(320px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 12px;
+  color: var(--text);
+  background: rgba(17, 23, 35, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.freeze-search label {
+  display: block;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+.freeze-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  color: #111827;
+  background: #fff;
+  border: 1px solid #b8c1d1;
+  border-radius: 6px;
+}
+.freeze-search-count {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+.freeze-search ul {
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.freeze-search-empty {
+  padding: 6px 4px;
+  color: var(--muted);
+}
+.freeze-search-item {
+  display: block;
+  width: 100%;
+  padding: 6px 4px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.freeze-search-item:hover { background: rgba(255, 255, 255, 0.06); }
+.freeze-search-name { display: block; font-weight: 650; }
+.freeze-search-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
 
 /* ============================================================================
    Floating view controls
@@ -507,6 +600,47 @@ body.interactive .node { cursor: pointer; }
   display: inline-block;
   font-style: normal;
 }
+
+.ro-affil {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ro-connections {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ro-connections li { margin: 2px 0; }
+
+.ro-path {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+}
+.ro-path-title {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.ro-path-summary {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ro-path-hops {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.ro-path-hops li { margin: 2px 0; }
 
 .ro-hint {
   margin: 10px 0 0;

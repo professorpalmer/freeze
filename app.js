@@ -2,9 +2,9 @@
    Freese Index — independent mockup of a RedString-style investigation board
    ----------------------------------------------------------------------------
    · Pure client-side, no network requests, no auth, no external assets.
-   · Graph is rendered into a SINGLE inline <svg>. All 33 edges are batched
-     into two <path> elements (base + active), labels share one <g>, and each
-     of the 24 nodes is one <g> — no DOM element per graph element.
+   · Graph is rendered into a SINGLE inline <svg>. Edges are batched into
+     tiered <path> elements (base + active + path accent), labels share one
+     <g>, and each node is one <g>.
    · Pan (drag / arrows), zoom (wheel / buttons / pinch), fit-to-view,
      dim-strings toggle, node dragging when interactivity is on, hover and
      selection treatment, and a detail/status readout.
@@ -13,7 +13,7 @@
 'use strict';
 
 /* ---------------------------------------------------------------------------
-   Search, selection details, and shortest-path enhancement.
+   Pure graph helpers (safe under Node — no DOM side effects).
 --------------------------------------------------------------------------- */
 
 function freezeIndexBoardBridge() {
@@ -43,6 +43,14 @@ function freezeNodeName(node) {
   return freezeNodeText(node && (node.name ?? node.label ?? node.title ?? node.id));
 }
 
+function freezeNodeRole(node) {
+  return freezeNodeText(node && (node.role ?? node.title ?? node.subtitle));
+}
+
+function freezeNodeBlurb(node) {
+  return freezeNodeText(node && (node.blurb ?? node.summary ?? node.description ?? node.bio));
+}
+
 function freezeNodeAffiliation(node) {
   return freezeNodeText(node && (node.affiliation ?? node.affiliations ?? node.group ?? node.organization));
 }
@@ -51,6 +59,10 @@ function freezeNodeType(node) {
   const type = freezeNodeText(node && (node.type ?? node.kind ?? node.category));
   if (type && typeof TYPES !== 'undefined' && TYPES[type] && TYPES[type].label) return TYPES[type].label;
   return type || 'Node';
+}
+
+function freezeNodeTypeKey(node) {
+  return freezeNodeText(node && (node.type ?? node.kind ?? node.category));
 }
 
 function freezeEdgeEndpoint(edge, side) {
@@ -64,8 +76,50 @@ function freezeEdgeLabel(edge) {
   return freezeNodeText(edge && (edge.relationship ?? edge.relation ?? edge.label ?? edge.kind ?? edge.type)) || 'connected to';
 }
 
-function freezeGraphModel() {
-  const nodes = freezeGraphNodes();
+function freezeNormalizeEdgeMeta(edge) {
+  const from = freezeEdgeEndpoint(edge, 'source');
+  const to = freezeEdgeEndpoint(edge, 'target');
+  const touchesSubject = from === 'josh' || to === 'josh';
+  const kind = freezeNodeText(edge && edge.kind);
+  const tier = freezeNodeText(edge && edge.tier)
+    || (touchesSubject ? 'core' : (kind === 'membership' ? 'strong' : 'related'));
+  const strength = freezeNodeText(edge && edge.strength)
+    || (tier === 'core' ? 'high' : tier === 'strong' ? 'medium' : 'low');
+  const evidence = freezeNodeText(edge && (edge.evidence ?? edge.source ?? edge.note));
+  return {
+    tier,
+    strength,
+    evidence,
+    kind: kind || tier,
+    label: freezeEdgeLabel(edge),
+  };
+}
+
+function freezeConnectedAffiliations(node, model) {
+  const listed = freezeNodeAffiliation(node);
+  if (listed) return listed;
+  if (!model || !model.adjacency || !model.byId) return '';
+  const id = freezeNodeId(node);
+  const neighbors = model.adjacency.get(id) || [];
+  const names = [];
+  const seen = new Set();
+  neighbors.forEach(({ id: otherId }) => {
+    const other = model.byId.get(otherId);
+    if (!other) return;
+    const key = freezeNodeTypeKey(other);
+    if (key !== 'band' && key !== 'project') return;
+    const name = freezeNodeName(other);
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    names.push(name);
+  });
+  return names.join(', ');
+}
+
+function freezeGraphModel(rawNodes, rawEdges) {
+  const nodes = rawNodes != null
+    ? (Array.isArray(rawNodes) ? rawNodes : Object.values(rawNodes || {}))
+    : freezeGraphNodes();
   const byId = new Map();
   const byName = new Map();
   nodes.forEach((node, index) => {
@@ -76,17 +130,28 @@ function freezeGraphModel() {
   });
   const adjacency = new Map(nodes.map((node, index) => [freezeNodeId(node) || String(index), []]));
   const edges = [];
-  const rawEdges = typeof EDGES !== 'undefined' && Array.isArray(EDGES) ? EDGES : [];
-  rawEdges.forEach((edge) => {
+  const edgeSource = rawEdges != null
+    ? rawEdges
+    : (typeof EDGES !== 'undefined' && Array.isArray(EDGES) ? EDGES : []);
+  (Array.isArray(edgeSource) ? edgeSource : []).forEach((edge) => {
     const rawSource = freezeEdgeEndpoint(edge, 'source');
     const rawTarget = freezeEdgeEndpoint(edge, 'target');
+    if (!rawSource || !rawTarget) return;
     const sourceNode = byId.get(rawSource) || byName.get(rawSource.toLowerCase());
     const targetNode = byId.get(rawTarget) || byName.get(rawTarget.toLowerCase());
     if (!sourceNode || !targetNode) return;
+    const meta = freezeNormalizeEdgeMeta(edge);
     const normalized = {
+      id: freezeNodeText(edge && edge.id),
       source: freezeNodeId(sourceNode),
       target: freezeNodeId(targetNode),
-      label: freezeEdgeLabel(edge),
+      from: freezeNodeId(sourceNode),
+      to: freezeNodeId(targetNode),
+      label: meta.label,
+      tier: meta.tier,
+      strength: meta.strength,
+      kind: meta.kind,
+      evidence: meta.evidence,
     };
     edges.push(normalized);
     if (!adjacency.has(normalized.source)) adjacency.set(normalized.source, []);
@@ -98,12 +163,12 @@ function freezeGraphModel() {
 }
 
 function freezeResolveNode(value, model) {
-  if (!value) return null;
+  if (!value || !model) return null;
   if (typeof value === 'object') {
     const id = freezeNodeId(value);
-    if (model.byId.has(id)) return model.byId.get(id);
+    if (id && model.byId.has(id)) return model.byId.get(id);
     const name = freezeNodeName(value).toLowerCase();
-    return model.byName.get(name) || null;
+    return (name && model.byName.get(name)) || null;
   }
   const text = String(value);
   return model.byId.get(text) || model.byName.get(text.toLowerCase()) || null;
@@ -112,7 +177,7 @@ function freezeResolveNode(value, model) {
 function freezeShortestPath(model, start) {
   const josh = model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese')
     || model.nodes.find((node) => /josh[-_ ]freese/i.test(freezeNodeId(node)));
-  if (!start || !josh) return { target: josh, nodes: [], edges: [], disconnected: true };
+  if (!start || !josh) return { target: josh || null, nodes: [], edges: [], disconnected: true };
   const startId = freezeNodeId(start);
   const targetId = freezeNodeId(josh);
   if (startId === targetId) return { target: josh, nodes: [start], edges: [], disconnected: false };
@@ -148,266 +213,194 @@ function freezeShortestPath(model, start) {
   };
 }
 
+function freezeDescribeHop(edge, model, fromId, toId) {
+  if (!edge) return '';
+  const storedSourceId = edge.source || edge.from;
+  const storedTargetId = edge.target || edge.to;
+  const sourceId = fromId || storedSourceId;
+  const targetId = toId || storedTargetId;
+  const fromName = freezeNodeName(model.byId.get(sourceId)) || sourceId;
+  const toName = freezeNodeName(model.byId.get(targetId)) || targetId;
+  const meta = `${edge.label} · ${edge.tier}/${edge.strength}`;
+  const evidence = edge.evidence ? ` — ${edge.evidence}` : '';
+  return `${fromName} → ${toName}: ${meta}${evidence}`;
+}
+
+function freezePathSummary(node, model, path) {
+  const result = path || freezeShortestPath(model, node);
+  if (!result.target) return { summary: 'Josh Freese is not present in this graph.', hops: [], path: result };
+  if (result.disconnected) {
+    return {
+      summary: `${freezeNodeName(node)} is disconnected from Josh Freese.`,
+      hops: [],
+      path: result,
+    };
+  }
+  if (result.edges.length === 0) {
+    return { summary: 'Josh Freese is the selected subject.', hops: [], path: result };
+  }
+  const names = result.nodes.map(freezeNodeName).join(' → ');
+  return {
+    summary: `Path to Josh Freese: ${names} (${result.nodes.length - 1} hop${result.nodes.length - 1 === 1 ? '' : 's'})`,
+    hops: result.edges.map((edge, index) => {
+      const fromId = freezeNodeId(result.nodes[index]);
+      const toId = freezeNodeId(result.nodes[index + 1]);
+      return freezeDescribeHop(edge, model, fromId, toId);
+    }),
+    path: result,
+  };
+}
+
+function freezeSearchNodes(model, query, limit) {
+  const cap = Number.isFinite(limit) ? Math.max(1, limit) : 12;
+  const q = String(query || '').trim().toLowerCase();
+  const scored = [];
+  model.nodes.forEach((node) => {
+    const affiliations = freezeConnectedAffiliations(node, model);
+    const haystack = [
+      freezeNodeName(node),
+      freezeNodeRole(node),
+      freezeNodeBlurb(node),
+      freezeNodeType(node),
+      freezeNodeTypeKey(node),
+      affiliations,
+      freezeNodeId(node),
+    ].join(' ').toLowerCase();
+    if (q && !haystack.includes(q)) return;
+    scored.push({ node, affiliations });
+  });
+  scored.sort((a, b) => freezeNodeName(a.node).localeCompare(freezeNodeName(b.node)));
+  return {
+    total: scored.length,
+    matches: scored.slice(0, cap),
+    capped: scored.length > cap,
+  };
+}
+
 function freezeNodeCoordinates(node, element) {
   const position = node && (node.position || node.coordinates);
-  let x = node && (node.x ?? node.cx ?? node.fx ?? (position && position.x));
-  let y = node && (node.y ?? node.cy ?? node.fy ?? (position && position.y));
+  let x = node && (node.cx ?? (position && (position.cx ?? position.x)) ?? node.fx);
+  let y = node && (node.cy ?? (position && (position.cy ?? position.y)) ?? node.fy);
+
+  // Prefer finalized centers; if only chip top-left exists, derive the center.
+  if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) {
+    const left = node && (node.x ?? (position && position.x));
+    const top = node && (node.y ?? (position && position.y));
+    if (Number.isFinite(Number(left)) && Number.isFinite(Number(top))) {
+      const w = Number(node && node.w) || 0;
+      const h = Number(node && node.h) || 0;
+      x = Number(left) + w / 2;
+      y = Number(top) + h / 2;
+    }
+  }
+
   if ((!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) && element) {
-    const match = String(element.getAttribute('transform') || '').match(/translate\\(\\s*(-?\\d+(?:\\.\\d+)?)[,\\s]+(-?\\d+(?:\\.\\d+)?)\\s*\\)/);
+    const match = String(element.getAttribute('transform') || '')
+      .match(/translate\(\s*(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)\s*\)/);
     if (match) {
-      x = match[1];
-      y = match[2];
+      const w = Number(node && node.w);
+      const h = Number(node && node.h);
+      x = Number(match[1]) + (Number.isFinite(w) ? w / 2 : 0);
+      y = Number(match[2]) + (Number.isFinite(h) ? h / 2 : 0);
     }
   }
   return { x: Number(x), y: Number(y) };
 }
 
-function freezeFindSvg() {
-  return document.querySelector('svg');
+function freezeBoardSnapshot(model, selected, path) {
+  return {
+    meta: {
+      title: 'Freese Index',
+      kind: 'local-board-snapshot',
+      localOnly: true,
+      savedAt: new Date().toISOString(),
+      nodeCount: model.nodes.length,
+      edgeCount: model.edges.length,
+    },
+    nodes: model.nodes.map((node) => ({
+      id: freezeNodeId(node),
+      name: freezeNodeName(node),
+      type: freezeNodeTypeKey(node),
+      role: freezeNodeRole(node),
+      blurb: freezeNodeBlurb(node),
+      x: node.x,
+      y: node.y,
+    })),
+    edges: model.edges.map((edge) => ({
+      id: edge.id,
+      from: edge.from || edge.source,
+      to: edge.to || edge.target,
+      label: edge.label,
+      tier: edge.tier,
+      strength: edge.strength,
+      evidence: edge.evidence || undefined,
+    })),
+    selected: selected
+      ? { id: freezeNodeId(selected), name: freezeNodeName(selected) }
+      : null,
+    path: path
+      ? {
+          disconnected: !!path.disconnected,
+          nodeIds: (path.nodes || []).map(freezeNodeId),
+          hops: (path.edges || []).map((edge) => ({
+            from: edge.from || edge.source,
+            to: edge.to || edge.target,
+            label: edge.label,
+            tier: edge.tier,
+            strength: edge.strength,
+            evidence: edge.evidence || undefined,
+          })),
+        }
+      : null,
+  };
 }
 
-function freezeFindNodeElement(svg, node) {
-  if (!svg || !node) return null;
-  const id = freezeNodeId(node);
-  const name = freezeNodeName(node);
-  const elements = svg.querySelectorAll('[data-node-id], [data-id], [data-node], [id], .node');
-  for (const element of elements) {
-    const values = [
-      element.getAttribute('data-node-id'),
-      element.getAttribute('data-id'),
-      element.getAttribute('data-node'),
-      element.getAttribute('id'),
-      element.getAttribute('data-name'),
-    ].filter(Boolean).map(String);
-    if (values.includes(id) || values.includes(`node-${id}`) || values.includes(`node_${id}`) || values.includes(name)) return element;
+function freezeLocalShareUrl(selectedId) {
+  if (typeof location === 'undefined') {
+    return selectedId ? `#node=${encodeURIComponent(selectedId)}` : '#board';
   }
-  return null;
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = selectedId ? `node=${encodeURIComponent(selectedId)}` : 'board';
+  return url.toString();
 }
 
-function freezeFindScene(svg, nodeElement) {
-  if (nodeElement) {
-    let parent = nodeElement.parentElement;
-    while (parent && parent !== svg) {
-      if (parent.tagName && parent.tagName.toLowerCase() === 'g' && parent.hasAttribute('transform')) return parent;
-      parent = parent.parentElement;
-    }
-    if (nodeElement.parentElement) return nodeElement.parentElement;
-  }
-  return svg && (svg.querySelector('g[transform]') || svg.querySelector('g') || svg);
-}
+/* ---------------------------------------------------------------------------
+   Local search panel (browser only).
+--------------------------------------------------------------------------- */
 
 function freezeClearElement(element) {
   while (element && element.firstChild) element.removeChild(element.firstChild);
 }
 
-function freezeSvgElement(name, attributes) {
-  const element = document.createElementNS('http://www.w3.org/2000/svg', name);
-  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
-  return element;
+function freezeQuadPoint(p0x, p0y, p1x, p1y, t) {
+  const mx = (p0x + p1x) / 2;
+  const my = (p0y + p1y) / 2;
+  const sag = Math.min(26, Math.hypot(p1x - p0x, p1y - p0y) * 0.06);
+  const cx = mx;
+  const cy = my + sag;
+  return {
+    x: (1 - t) * (1 - t) * p0x + 2 * (1 - t) * t * cx + t * t * p1x,
+    y: (1 - t) * (1 - t) * p0y + 2 * (1 - t) * t * cy + t * t * p1y,
+  };
 }
 
+/** Build curved path `d` from finalized node centers (cx/cy), never chip top-left. */
 function freezeHighlightPath(model, path) {
-  const svg = freezeFindSvg();
-  if (!svg) return;
-  const firstElement = path.nodes.map((node) => freezeFindNodeElement(svg, node)).find(Boolean);
-  const scene = freezeFindScene(svg, firstElement);
-  if (!scene) return;
-  let layer = scene.querySelector(':scope > [data-freeze-shortest-path]');
-  if (!layer) {
-    layer = freezeSvgElement('g', {
-      'data-freeze-shortest-path': 'true',
-      'aria-hidden': 'true',
-      'pointer-events': 'none',
-    });
-    scene.appendChild(layer);
-  }
-  freezeClearElement(layer);
-
-  const coordinates = new Map();
-  path.nodes.forEach((node) => {
-    const point = freezeNodeCoordinates(node, freezeFindNodeElement(svg, node));
-    if (Number.isFinite(point.x) && Number.isFinite(point.y)) coordinates.set(freezeNodeId(node), point);
-  });
+  if (!path || path.disconnected || !(path.edges || []).length) return '';
+  let d = '';
   path.edges.forEach((edge) => {
-    const source = coordinates.get(edge.source);
-    const target = coordinates.get(edge.target);
-    if (!source || !target) return;
-    layer.appendChild(freezeSvgElement('line', {
-      class: 'freeze-shortest-path-edge',
-      'data-shortest-path-edge': `${edge.source}-${edge.target}`,
-      x1: source.x,
-      y1: source.y,
-      x2: target.x,
-      y2: target.y,
-      stroke: '#ffe082',
-      'stroke-width': 12,
-      'stroke-linecap': 'round',
-      opacity: 0.95,
-    }));
+    const sourceNode = model.byId.get(edge.source || edge.from);
+    const targetNode = model.byId.get(edge.target || edge.to);
+    const source = freezeNodeCoordinates(sourceNode);
+    const target = freezeNodeCoordinates(targetNode);
+    if (!Number.isFinite(source.x) || !Number.isFinite(target.x)) return;
+    const mx = (source.x + target.x) / 2;
+    const my = (source.y + target.y) / 2;
+    const sag = Math.min(26, Math.hypot(target.x - source.x, target.y - source.y) * 0.06);
+    d += `M${source.x.toFixed(1)},${source.y.toFixed(1)} Q${mx.toFixed(1)},${(my + sag).toFixed(1)} ${target.x.toFixed(1)},${target.y.toFixed(1)}`;
   });
-  path.nodes.forEach((node) => {
-    const point = coordinates.get(freezeNodeId(node));
-    if (!point) return;
-    layer.appendChild(freezeSvgElement('circle', {
-      class: 'freeze-shortest-path-node',
-      'data-shortest-path-node': freezeNodeId(node),
-      cx: point.x,
-      cy: point.y,
-      r: 25,
-      fill: 'none',
-      stroke: '#ffe082',
-      'stroke-width': 5,
-      opacity: 0.98,
-    }));
-  });
-
-  svg.querySelectorAll('[data-shortest-path-node="true"], [data-shortest-path-node="false"]').forEach((element) => {
-    element.removeAttribute('data-shortest-path-node');
-  });
-  path.nodes.forEach((node) => {
-    const element = freezeFindNodeElement(svg, node);
-    if (element) element.setAttribute('data-shortest-path-node', 'true');
-  });
-}
-
-function freezeReadoutElement() {
-  const selectors = [
-    '#readout', '#detail-readout', '#node-readout', '#selection-readout',
-    '#node-detail', '#details', '#detail', '#status', '[data-readout]',
-  ];
-  for (const selector of selectors) {
-    const element = document.querySelector(selector);
-    if (element) return element;
-  }
-  const marked = Array.from(document.querySelectorAll('[id], [class]')).find((element) => {
-    const marker = `${element.id || ''} ${element.className || ''}`.toLowerCase();
-    return /readout|detail|selection|status/.test(marker) && element.tagName.toLowerCase() !== 'body';
-  });
-  return marked || null;
-}
-
-function freezeUpdateReadout(node, model) {
-  if (!node) return;
-  const path = freezeShortestPath(model, node);
-  const existing = freezeReadoutElement();
-  const host = existing || document.body;
-  let extension = host.querySelector('[data-freeze-selection-details]');
-  if (!extension) {
-    extension = document.createElement('section');
-    extension.setAttribute('data-freeze-selection-details', 'true');
-    extension.setAttribute('aria-live', 'polite');
-    extension.setAttribute('aria-atomic', 'true');
-    extension.style.marginTop = '10px';
-    extension.style.paddingTop = '10px';
-    extension.style.borderTop = '1px solid rgba(255,255,255,.16)';
-    host.appendChild(extension);
-  }
-  freezeClearElement(extension);
-
-  const heading = document.createElement('h3');
-  heading.textContent = `${freezeNodeName(node)} details`;
-  heading.style.margin = '0 0 6px';
-  heading.style.fontSize = '12px';
-  extension.appendChild(heading);
-  const summary = document.createElement('p');
-  summary.style.margin = '3px 0';
-  summary.textContent = `Type: ${freezeNodeType(node)} · Affiliation: ${freezeNodeAffiliation(node) || 'Not listed'}`;
-  extension.appendChild(summary);
-  const adjacency = model.adjacency.get(freezeNodeId(node)) || [];
-  const connections = document.createElement('p');
-  connections.style.margin = '3px 0';
-  connections.textContent = `Direct connections: ${adjacency.length}`;
-  extension.appendChild(connections);
-
-  const connectionList = document.createElement('ul');
-  connectionList.style.margin = '5px 0 8px';
-  connectionList.style.paddingLeft = '18px';
-  if (!adjacency.length) {
-    const item = document.createElement('li');
-    item.textContent = 'None';
-    connectionList.appendChild(item);
-  } else {
-    adjacency.forEach(({ id, edge }) => {
-      const item = document.createElement('li');
-      item.textContent = `${freezeNodeName(model.byId.get(id))} — ${edge.label}`;
-      connectionList.appendChild(item);
-    });
-  }
-  extension.appendChild(connectionList);
-
-  const pathText = document.createElement('p');
-  pathText.style.margin = '3px 0';
-  if (!path.target) {
-    pathText.textContent = 'Josh Freese is not present in this graph.';
-  } else if (path.disconnected) {
-    pathText.textContent = `${freezeNodeName(node)} is disconnected from Josh Freese.`;
-  } else {
-    const names = path.nodes.map(freezeNodeName).join(' → ');
-    pathText.textContent = `Path to Josh Freese: ${names} (${path.nodes.length - 1} jumps)`;
-  }
-  extension.appendChild(pathText);
-}
-
-function freezeRenderGraph() {
-  const bridge = freezeIndexBoardBridge();
-  if (bridge && typeof bridge.render === 'function') {
-    try { bridge.render(); return; } catch (error) { /* fall through to legacy hooks */ }
-  }
-  if (typeof render === 'function') {
-    try { render(); } catch (error) { /* preserve the existing renderer's behavior */ }
-  } else if (typeof renderGraph === 'function') {
-    try { renderGraph(); } catch (error) { /* preserve the existing renderer's behavior */ }
-  }
-}
-
-function freezeExistingFocus(node) {
-  const candidates = [];
-  const bridge = freezeIndexBoardBridge();
-  if (bridge) {
-    if (typeof bridge.centerNode === 'function') candidates.push(bridge.centerNode.bind(bridge));
-    if (typeof bridge.focusNode === 'function') candidates.push(bridge.focusNode.bind(bridge));
-    if (typeof bridge.centerOnNode === 'function') candidates.push(bridge.centerOnNode.bind(bridge));
-  }
-  if (typeof focusNode === 'function') candidates.push(focusNode);
-  if (typeof centerOnNode === 'function') candidates.push(centerOnNode);
-  if (typeof centerNodeInView === 'function') candidates.push(centerNodeInView);
-  if (typeof panToNode === 'function') candidates.push(panToNode);
-  for (const focus of candidates) {
-    try {
-      focus(freezeNodeId(node) || node.id);
-      return true;
-    } catch (error) {
-      try {
-        focus(node);
-        return true;
-      } catch (ignored) {
-        // Try the next existing focus helper, then use the SVG transform fallback.
-      }
-    }
-  }
-  return false;
-}
-
-function freezeCenterNode(node) {
-  if (freezeExistingFocus(node)) return;
-  const svg = freezeFindSvg();
-  const element = freezeFindNodeElement(svg, node);
-  const scene = freezeFindScene(svg, element);
-  if (!svg || !element || !scene || !element.getBoundingClientRect) return;
-  const svgRect = svg.getBoundingClientRect();
-  const nodeRect = element.getBoundingClientRect();
-  if (!svgRect.width || !svgRect.height || !nodeRect.width || !nodeRect.height) return;
-  const dx = svgRect.left + svgRect.width / 2 - (nodeRect.left + nodeRect.width / 2);
-  const dy = svgRect.top + svgRect.height / 2 - (nodeRect.top + nodeRect.height / 2);
-  const matrix = scene.getScreenCTM && scene.getScreenCTM();
-  const scaleX = matrix && Math.abs(matrix.a) > 0 ? Math.abs(matrix.a) : 1;
-  const scaleY = matrix && Math.abs(matrix.d) > 0 ? Math.abs(matrix.d) : 1;
-  const transform = scene.getAttribute('transform') || '';
-  const match = transform.match(/translate\\(\\s*(-?\\d+(?:\\.\\d+)?)(?:[,\\s]+(-?\\d+(?:\\.\\d+)?))?\\s*\\)/);
-  if (!match) return;
-  const tx = Number(match[1]) + dx / scaleX;
-  const ty = Number(match[2] || 0) + dy / scaleY;
-  scene.setAttribute('transform', transform.replace(match[0], `translate(${tx} ${ty})`));
+  return d;
 }
 
 function freezeBuildSearchPanel(model, activate) {
@@ -415,188 +408,76 @@ function freezeBuildSearchPanel(model, activate) {
   if (panel) return panel;
   panel = document.createElement('aside');
   panel.id = 'freeze-search-panel';
+  panel.className = 'freeze-search';
   panel.setAttribute('aria-label', 'Search graph');
-  Object.assign(panel.style, {
-    position: 'fixed',
-    top: '76px',
-    left: '16px',
-    zIndex: '20',
-    width: 'min(320px, calc(100vw - 32px))',
-    boxSizing: 'border-box',
-    padding: '12px',
-    color: '#f5f7fb',
-    background: 'rgba(17, 23, 35, .96)',
-    border: '1px solid rgba(255,255,255,.2)',
-    borderRadius: '10px',
-    boxShadow: '0 12px 30px rgba(0,0,0,.3)',
-    font: '12px/1.4 system-ui, sans-serif',
-  });
-  const label = document.createElement('label');
-  label.htmlFor = 'freeze-search-input';
-  label.textContent = 'Search people, bands, and projects';
-  label.style.display = 'block';
-  label.style.fontWeight = '600';
-  label.style.marginBottom = '6px';
-  panel.appendChild(label);
-  const input = document.createElement('input');
-  input.id = 'freeze-search-input';
-  input.type = 'search';
-  input.autocomplete = 'off';
-  input.placeholder = 'Name or affiliation';
-  input.setAttribute('aria-controls', 'freeze-search-results');
-  input.style.width = '100%';
-  input.style.boxSizing = 'border-box';
-  input.style.padding = '7px 8px';
-  input.style.color = '#111827';
-  input.style.background = '#fff';
-  input.style.border = '1px solid #b8c1d1';
-  input.style.borderRadius = '6px';
-  panel.appendChild(input);
-  const results = document.createElement('ul');
-  results.id = 'freeze-search-results';
-  results.setAttribute('role', 'listbox');
-  results.setAttribute('aria-live', 'polite');
-  results.setAttribute('aria-label', 'Search results');
-  results.style.listStyle = 'none';
-  results.style.maxHeight = '240px';
-  results.style.overflowY = 'auto';
-  results.style.margin = '8px 0 0';
-  results.style.padding = '0';
-  panel.appendChild(results);
+  panel.innerHTML =
+    '<label for="freeze-search-input">Search people, bands, and projects</label>' +
+    '<input id="freeze-search-input" type="search" autocomplete="off" placeholder="Name, role, type, or affiliation" aria-controls="freeze-search-results">' +
+    '<p id="freeze-search-count" class="freeze-search-count" aria-live="polite"></p>' +
+    '<ul id="freeze-search-results" role="listbox" aria-label="Search results"></ul>';
   document.body.appendChild(panel);
+
+  const input = panel.querySelector('#freeze-search-input');
+  const results = panel.querySelector('#freeze-search-results');
+  const count = panel.querySelector('#freeze-search-count');
 
   const renderResults = () => {
     freezeClearElement(results);
-    const query = input.value.trim().toLowerCase();
-    const matches = model.nodes.filter((node) => {
-      const haystack = `${freezeNodeName(node)} ${freezeNodeAffiliation(node)}`.toLowerCase();
-      return !query || haystack.includes(query);
-    });
-    results.setAttribute('aria-label', `${matches.length} search result${matches.length === 1 ? '' : 's'}`);
-    if (!matches.length) {
+    const query = String(input.value || '').trim();
+    if (!query) {
+      count.textContent = `${model.nodes.length} subjects on the board`;
+      results.setAttribute('aria-label', count.textContent);
       const empty = document.createElement('li');
-      empty.textContent = 'No matching nodes';
-      empty.style.padding = '6px 4px';
+      empty.className = 'freeze-search-empty';
+      empty.textContent = 'Type to filter by name, role, type, or affiliation';
       results.appendChild(empty);
       return;
     }
-    matches.forEach((node) => {
+
+    const found = freezeSearchNodes(model, query, 12);
+    if (!found.total) {
+      count.textContent = 'No matches';
+    } else if (found.capped) {
+      count.textContent = `Showing ${found.matches.length} of ${found.total} matches`;
+    } else {
+      count.textContent = `${found.total} match${found.total === 1 ? '' : 'es'}`;
+    }
+    results.setAttribute('aria-label', count.textContent);
+
+    if (!found.matches.length) {
+      const empty = document.createElement('li');
+      empty.className = 'freeze-search-empty';
+      empty.textContent = 'No matching subjects';
+      results.appendChild(empty);
+      return;
+    }
+
+    found.matches.forEach(({ node, affiliations }) => {
       const item = document.createElement('li');
       item.setAttribute('role', 'option');
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = freezeNodeName(node);
-      button.setAttribute('aria-label', `${freezeNodeName(node)}${freezeNodeAffiliation(node) ? `, ${freezeNodeAffiliation(node)}` : ''}`);
-      button.style.display = 'block';
-      button.style.width = '100%';
-      button.style.padding = '6px 4px';
-      button.style.textAlign = 'left';
-      button.style.color = '#f5f7fb';
-      button.style.background = 'transparent';
-      button.style.border = '0';
-      button.style.borderRadius = '4px';
-      button.style.cursor = 'pointer';
-      const affiliation = freezeNodeAffiliation(node);
-      button.title = affiliation ? `${freezeNodeType(node)} · ${affiliation}` : freezeNodeType(node);
+      button.className = 'freeze-search-item';
+      const role = freezeNodeRole(node);
+      const type = freezeNodeType(node);
+      button.innerHTML =
+        `<span class="freeze-search-name">${freezeNodeName(node)}</span>` +
+        `<span class="freeze-search-meta">${type}${role ? ` · ${role}` : ''}${affiliations ? ` · ${affiliations}` : ''}</span>`;
+      button.title = freezeNodeBlurb(node) || role || type;
       button.addEventListener('click', () => activate(node));
       item.appendChild(button);
       results.appendChild(item);
     });
   };
+
   input.addEventListener('input', renderResults);
   renderResults();
   return panel;
 }
 
-function freezeStartEnhancements() {
+function freezeStartSearch(model, activate) {
   if (document.getElementById('freeze-search-panel')) return;
-  const model = freezeGraphModel();
-  let selected = null;
-  const readSelection = () => {
-    const bridge = freezeIndexBoardBridge();
-    if (bridge && typeof bridge.getSelectedNode === 'function') {
-      const fromBridge = freezeResolveNode(bridge.getSelectedNode(), model);
-      if (fromBridge) return fromBridge;
-    }
-    const candidates = [];
-    if (typeof selectedNode !== 'undefined') candidates.push(selectedNode);
-    if (typeof selectedNodeId !== 'undefined') candidates.push(selectedNodeId);
-    if (typeof selectedId !== 'undefined') candidates.push(selectedId);
-    if (typeof activeNode !== 'undefined') candidates.push(activeNode);
-    if (typeof currentNode !== 'undefined') candidates.push(currentNode);
-    for (const candidate of candidates) {
-      const node = freezeResolveNode(candidate, model);
-      if (node) return node;
-    }
-    return selected;
-  };
-  const refresh = (node) => {
-    const next = freezeResolveNode(node, model) || readSelection();
-    if (!next) return;
-    selected = next;
-    freezeUpdateReadout(next, model);
-    freezeHighlightPath(model, freezeShortestPath(model, next));
-  };
-  const bridge = freezeIndexBoardBridge();
-  let originalSelectNode = null;
-  let hooked = false;
-  if (bridge && typeof bridge.selectNode === 'function') {
-    originalSelectNode = bridge.selectNode.bind(bridge);
-    bridge.selectNode = function enhancedSelectNode(nodeOrId) {
-      const result = originalSelectNode.apply(this, arguments);
-      const node = freezeResolveNode(nodeOrId, model) || readSelection();
-      setTimeout(() => refresh(node), 0);
-      return result;
-    };
-    hooked = true;
-  } else if (typeof selectNode === 'function') {
-    originalSelectNode = selectNode;
-    const enhancedSelectNode = function enhancedSelectNode(nodeOrId) {
-      const result = originalSelectNode.apply(this, arguments);
-      const node = freezeResolveNode(nodeOrId, model) || readSelection();
-      setTimeout(() => refresh(node), 0);
-      return result;
-    };
-    try {
-      selectNode = enhancedSelectNode;
-      hooked = true;
-    } catch (error) {
-      // A const-bound selector is still used directly by the search activation below.
-    }
-  }
-  const activate = (node) => {
-    const liveBridge = freezeIndexBoardBridge();
-    if (liveBridge && typeof liveBridge.selectNode === 'function') {
-      liveBridge.selectNode(freezeNodeId(node));
-    } else if (hooked && typeof selectNode === 'function') {
-      selectNode(freezeNodeId(node));
-    } else if (originalSelectNode) {
-      originalSelectNode.call(null, freezeNodeId(node));
-    } else if (typeof selectNode === 'function') {
-      selectNode(freezeNodeId(node));
-    }
-    freezeRenderGraph();
-    freezeCenterNode(node);
-    refresh(node);
-  };
   freezeBuildSearchPanel(model, activate);
-  const svg = freezeFindSvg();
-  if (svg) {
-    svg.addEventListener('click', (event) => {
-      const target = event.target && event.target.closest ? event.target.closest('[data-node-id], [data-id], [data-node], .node') : null;
-      if (!target) return;
-      setTimeout(() => refresh(readSelection() || freezeResolveNode(target.getAttribute('data-node-id') || target.getAttribute('data-id'), model)), 0);
-    });
-  }
-  refresh(readSelection() || model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese'));
-}
-
-if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(freezeStartEnhancements, 0), { once: true });
-  } else {
-    setTimeout(freezeStartEnhancements, 0);
-  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -698,39 +579,39 @@ const NODES = [
 ];
 
 const EDGES = [
-  { id: 'e01', from: 'josh', to: 'ff',       label: 'drummer \u00b7 2023\u2013' },
-  { id: 'e02', from: 'josh', to: 'apc',      label: 'drummer \u00b7 2003\u2013' },
-  { id: 'e03', from: 'josh', to: 'nin',      label: 'live drummer' },
-  { id: 'e04', from: 'josh', to: 'devo',     label: 'drummer \u00b7 1996\u20132014' },
-  { id: 'e05', from: 'josh', to: 'vandals',  label: 'drummer \u00b7 1989\u2013' },
-  { id: 'e06', from: 'josh', to: 'gnr',      label: 'session drums' },
-  { id: 'e07', from: 'josh', to: 'weezer',   label: 'touring \u00b7 2000s' },
-  { id: 'e08', from: 'josh', to: 'st',       label: 'early drummer' },
-  { id: 'e09', from: 'josh', to: 'sting',    label: 'touring band' },
-  { id: 'e10', from: 'josh', to: 'session',  label: '300+ credits' },
-  { id: 'e11', from: 'josh', to: 'chinese-democracy', label: 'recorded drums' },
-  { id: 'e12', from: 'josh', to: 'damning-well',      label: 'member' },
-  { id: 'e13', from: 'josh', to: 'tribute',  label: 'performed' },
-  { id: 'e14', from: 'josh', to: 'freese-index', label: 'career map' },
-  { id: 'e15', from: 'josh', to: 'grohl',    label: 'bandmate' },
-  { id: 'e16', from: 'josh', to: 'taylor',   label: 'predecessor' },
-  { id: 'e17', from: 'josh', to: 'maynard',  label: 'bandmate' },
-  { id: 'e18', from: 'josh', to: 'howerdel', label: 'bandmate' },
-  { id: 'e19', from: 'josh', to: 'reznor',   label: 'hired him' },
-  { id: 'e20', from: 'josh', to: 'mothersbaugh', label: 'bandmate' },
-  { id: 'e21', from: 'josh', to: 'warren',   label: 'bandmate' },
-  { id: 'e22', from: 'josh', to: 'westerberg', label: 'studio drummer' },
-  { id: 'e23', from: 'josh', to: 'lohner',   label: 'bandmate' },
-  { id: 'e24', from: 'grohl', to: 'ff',      label: 'founder' },
-  { id: 'e25', from: 'taylor', to: 'ff',     label: 'drummer \u00b7 1996\u20132022' },
-  { id: 'e26', from: 'maynard', to: 'apc',   label: 'vocalist' },
-  { id: 'e27', from: 'howerdel', to: 'apc',  label: 'founder' },
-  { id: 'e28', from: 'reznor', to: 'nin',    label: 'frontman' },
-  { id: 'e29', from: 'lohner', to: 'nin',    label: 'bassist' },
-  { id: 'e30', from: 'mothersbaugh', to: 'devo', label: 'co-founder' },
-  { id: 'e31', from: 'warren', to: 'vandals', label: 'guitarist' },
-  { id: 'e32', from: 'grohl', to: 'tribute', label: 'organized' },
-  { id: 'e33', from: 'lohner', to: 'damning-well', label: 'founder' },
+  { id: 'e01', from: 'josh', to: 'ff',       label: 'drummer \u00b7 2023\u2013', tier: 'core', strength: 'high', evidence: 'Joined Foo Fighters as drummer in 2023' },
+  { id: 'e02', from: 'josh', to: 'apc',      label: 'drummer \u00b7 2003\u2013', tier: 'core', strength: 'high' },
+  { id: 'e03', from: 'josh', to: 'nin',      label: 'live drummer', tier: 'core', strength: 'high' },
+  { id: 'e04', from: 'josh', to: 'devo',     label: 'drummer \u00b7 1996\u20132014', tier: 'core', strength: 'high' },
+  { id: 'e05', from: 'josh', to: 'vandals',  label: 'drummer \u00b7 1989\u2013', tier: 'core', strength: 'high', evidence: 'Longest-running band seat' },
+  { id: 'e06', from: 'josh', to: 'gnr',      label: 'session drums', tier: 'core', strength: 'medium' },
+  { id: 'e07', from: 'josh', to: 'weezer',   label: 'touring \u00b7 2000s', tier: 'core', strength: 'medium' },
+  { id: 'e08', from: 'josh', to: 'st',       label: 'early drummer', tier: 'core', strength: 'medium' },
+  { id: 'e09', from: 'josh', to: 'sting',    label: 'touring band', tier: 'core', strength: 'medium' },
+  { id: 'e10', from: 'josh', to: 'session',  label: '300+ credits', tier: 'core', strength: 'high' },
+  { id: 'e11', from: 'josh', to: 'chinese-democracy', label: 'recorded drums', tier: 'core', strength: 'medium' },
+  { id: 'e12', from: 'josh', to: 'damning-well',      label: 'member', tier: 'core', strength: 'medium' },
+  { id: 'e13', from: 'josh', to: 'tribute',  label: 'performed', tier: 'core', strength: 'medium' },
+  { id: 'e14', from: 'josh', to: 'freese-index', label: 'career map', tier: 'core', strength: 'low' },
+  { id: 'e15', from: 'josh', to: 'grohl',    label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e16', from: 'josh', to: 'taylor',   label: 'predecessor', tier: 'core', strength: 'medium' },
+  { id: 'e17', from: 'josh', to: 'maynard',  label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e18', from: 'josh', to: 'howerdel', label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e19', from: 'josh', to: 'reznor',   label: 'hired him', tier: 'core', strength: 'high' },
+  { id: 'e20', from: 'josh', to: 'mothersbaugh', label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e21', from: 'josh', to: 'warren',   label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e22', from: 'josh', to: 'westerberg', label: 'studio drummer', tier: 'core', strength: 'medium' },
+  { id: 'e23', from: 'josh', to: 'lohner',   label: 'bandmate', tier: 'core', strength: 'high' },
+  { id: 'e24', from: 'grohl', to: 'ff',      label: 'founder', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e25', from: 'taylor', to: 'ff',     label: 'drummer \u00b7 1996\u20132022', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e26', from: 'maynard', to: 'apc',   label: 'vocalist', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e27', from: 'howerdel', to: 'apc',  label: 'founder', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e28', from: 'reznor', to: 'nin',    label: 'frontman', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e29', from: 'lohner', to: 'nin',    label: 'bassist', tier: 'strong', strength: 'medium', kind: 'membership' },
+  { id: 'e30', from: 'mothersbaugh', to: 'devo', label: 'co-founder', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e31', from: 'warren', to: 'vandals', label: 'guitarist', tier: 'strong', strength: 'high', kind: 'membership' },
+  { id: 'e32', from: 'grohl', to: 'tribute', label: 'organized', tier: 'related', strength: 'medium' },
+  { id: 'e33', from: 'lohner', to: 'damning-well', label: 'founder', tier: 'related', strength: 'medium' },
 ];
 
 /* chip geometry — pure function of the data (safe to run under Node) */
@@ -746,6 +627,11 @@ function finalizeNodes() {
   }
   const adj = new Map();
   for (const e of EDGES) {
+    const meta = freezeNormalizeEdgeMeta(e);
+    e.tier = meta.tier;
+    e.strength = meta.strength;
+    e.kind = meta.kind;
+    if (meta.evidence) e.evidence = meta.evidence;
     (adj.get(e.from) || adj.set(e.from, []).get(e.from)).push(e);
     (adj.get(e.to) || adj.set(e.to, []).get(e.to)).push(e);
   }
@@ -760,21 +646,25 @@ function finalizeNodes() {
 if (typeof document !== 'undefined') {
   (function main() {
     const byId = finalizeNodes();
+    const graphModel = freezeGraphModel(NODES, EDGES);
     const WORLD = { w: 2000, h: 1400 };
 
     const svg = document.getElementById('graph');
     const world = document.getElementById('world');
     const nodesG = document.getElementById('nodes');
     const labelsG = document.getElementById('edge-labels');
+    const edgesCorePath = document.getElementById('edges-core');
+    const edgesStrongPath = document.getElementById('edges-strong');
     const edgesPath = document.getElementById('edges');
     const activePath = document.getElementById('edges-active');
+    const pathAccent = document.getElementById('edges-path');
     const readout = document.getElementById('readout');
     const toast = document.getElementById('toast');
     const zoomPct = document.getElementById('zoom-pct');
 
     /* ----- view state ----- */
     const view = { tx: 0, ty: 0, scale: 1, fitted: false };
-    const ui = { dim: false, interactive: false, selected: null, hovered: null, active: null };
+    const ui = { dim: false, interactive: false, selected: null, hovered: null, active: null, path: null };
     const drag = { mode: null, id: null, sx: 0, sy: 0, nx: 0, ny: 0, moved: false };
     const pointers = new Map(); // pointerId -> {x,y}
     let pinch = null;           // {dist, mx, my}
@@ -787,19 +677,14 @@ if (typeof document !== 'undefined') {
     const nodeEls = new Map();
 
     function quadAt(p0x, p0y, p1x, p1y, t) {
-      const mx = (p0x + p1x) / 2, my = (p0y + p1y) / 2;
-      const sag = Math.min(26, Math.hypot(p1x - p0x, p1y - p0y) * 0.06);
-      const cx = mx, cy = my + sag;
-      return {
-        x: (1 - t) * (1 - t) * p0x + 2 * (1 - t) * t * cx + t * t * p1x,
-        y: (1 - t) * (1 - t) * p0y + 2 * (1 - t) * t * cy + t * t * p1y,
-      };
+      return freezeQuadPoint(p0x, p0y, p1x, p1y, t);
     }
 
     function edgePathData(edges) {
       let d = '';
       for (const e of edges) {
         const a = byId.get(e.from), b = byId.get(e.to);
+        if (!a || !b) continue;
         const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
         const sag = Math.min(26, Math.hypot(b.cx - a.cx, b.cy - a.cy) * 0.06);
         d += `M${a.cx.toFixed(1)},${a.cy.toFixed(1)} Q${mx.toFixed(1)},${(my + sag).toFixed(1)} ${b.cx.toFixed(1)},${b.cy.toFixed(1)}`;
@@ -807,11 +692,23 @@ if (typeof document !== 'undefined') {
       return d;
     }
 
+    function edgesByTier(tier) {
+      return EDGES.filter((e) => (e.tier || 'related') === tier);
+    }
+
     function renderEdges() {
-      edgesPath.setAttribute('d', edgePathData(EDGES));
+      if (edgesCorePath) edgesCorePath.setAttribute('d', edgePathData(edgesByTier('core')));
+      if (edgesStrongPath) edgesStrongPath.setAttribute('d', edgePathData(edgesByTier('strong')));
+      edgesPath.setAttribute('d', edgePathData(edgesByTier('related')));
       const activeId = ui.active;
       const active = activeId ? EDGES.filter((e) => e.from === activeId || e.to === activeId) : [];
       activePath.setAttribute('d', edgePathData(active));
+      renderPathAccent();
+    }
+
+    function renderPathAccent() {
+      if (!pathAccent) return;
+      pathAccent.setAttribute('d', freezeHighlightPath(graphModel, ui.path || { edges: [] }));
     }
 
     function renderLabels() {
@@ -829,6 +726,7 @@ if (typeof document !== 'undefined') {
         t.setAttribute('stroke-width', sw.toFixed(2));
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('data-e', e.id);
+        t.setAttribute('data-tier', e.tier || 'related');
         t.textContent = e.label;
         labelsG.appendChild(t);
       }
@@ -837,9 +735,13 @@ if (typeof document !== 'undefined') {
 
     function applyLabelHighlights() {
       const activeId = ui.active;
+      const pathEdgeIds = new Set((ui.path && ui.path.edges ? ui.path.edges : []).map((e) => e.id).filter(Boolean));
       for (const t of labelsG.children) {
         const e = EDGES.find((x) => x.id === t.getAttribute('data-e'));
-        t.classList.toggle('hl', !!e && activeId && (e.from === activeId || e.to === activeId));
+        const onActive = !!e && activeId && (e.from === activeId || e.to === activeId);
+        const onPath = !!e && pathEdgeIds.has(e.id);
+        t.classList.toggle('hl', onActive);
+        t.classList.toggle('path-hl', onPath);
       }
     }
 
@@ -958,10 +860,24 @@ if (typeof document !== 'undefined') {
       applyLabelHighlights();
     }
 
+    function setPathForNode(id) {
+      const node = id ? byId.get(id) : null;
+      ui.path = node ? freezeShortestPath(graphModel, node) : null;
+      for (const [nid, g] of nodeEls) {
+        const onPath = !!(ui.path && ui.path.nodes && ui.path.nodes.some((n) => freezeNodeId(n) === nid));
+        g.classList.toggle('on-path', onPath);
+        if (onPath) g.setAttribute('data-shortest-path-node', 'true');
+        else g.removeAttribute('data-shortest-path-node');
+      }
+      renderPathAccent();
+      applyLabelHighlights();
+    }
+
     function selectNode(id, { fromList = false } = {}) {
       ui.selected = id;
       ui.hovered = null;
       for (const [nid, g] of nodeEls) g.classList.toggle('sel', nid === id);
+      setPathForNode(id);
       setActive(id);
       updateReadout(id);
       if (fromList) {
@@ -973,7 +889,13 @@ if (typeof document !== 'undefined') {
     function clearSelection() {
       ui.selected = null;
       ui.hovered = null;
-      for (const g of nodeEls.values()) g.classList.remove('sel');
+      ui.path = null;
+      for (const g of nodeEls.values()) {
+        g.classList.remove('sel');
+        g.classList.remove('on-path');
+        g.removeAttribute('data-shortest-path-node');
+      }
+      if (pathAccent) pathAccent.setAttribute('d', '');
       setActive(null);
       updateReadout(null);
     }
@@ -987,6 +909,15 @@ if (typeof document !== 'undefined') {
         if (!seen.has(other.id)) { seen.add(other.id); names.push(other); }
       }
       return names.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function connectionLines(id) {
+      const n = byId.get(id);
+      return n.neighbors.map((e) => {
+        const other = byId.get(e.from === id ? e.to : e.from);
+        const meta = `${e.label} · ${e.tier}/${e.strength}`;
+        return { other, text: `${other.name} — ${meta}` };
+      }).sort((a, b) => a.other.name.localeCompare(b.other.name));
     }
 
     function updateReadout(id) {
@@ -1009,23 +940,40 @@ if (typeof document !== 'undefined') {
       const n = byId.get(id);
       const type = TYPES[n.type];
       const links = neighborButtons(id);
+      const connections = connectionLines(id);
+      const affiliations = freezeConnectedAffiliations(n, graphModel);
       const counts = n.neighbors.length;
+      const pathDetails = freezePathSummary(n, graphModel, ui.path);
+
       readout.innerHTML =
         '<p class="ro-kicker">' + (ui.selected === id ? 'Selected subject' : 'Subject') + '</p>' +
         `<h2>${n.name}</h2>` +
         `<p class="ro-role">${n.role}</p>` +
         `<span class="typechip"><i style="background:${type.color}"></i>${type.label}</span>` +
         `<p class="ro-blurb">${n.blurb}</p>` +
+        (affiliations ? `<p class="ro-affil">Affiliations: ${affiliations}</p>` : '') +
         '<div class="ro-meta">' +
         `<div class="cell"><b>${counts}</b><span>strings</span></div>` +
         `<div class="cell"><b>${links.length}</b><span>related</span></div>` +
         '</div>' +
+        (connections.length
+          ? '<ul class="ro-connections" aria-label="Direct connections">' +
+            connections.slice(0, 8).map((c) => `<li>${c.text}</li>`).join('') +
+            '</ul>'
+          : '') +
         (links.length
           ? '<div class="ro-links" aria-label="Related subjects">' +
             links.slice(0, 9).map((l) => `<button class="ro-link" type="button" data-go="${l.id}">${l.name}</button>`).join('') +
             '</div>'
           : '') +
-        '<p class="ro-hint">Mockup detail panel \u2014 nothing is fetched or persisted remotely.</p>';
+        '<section class="ro-path" data-freeze-path-section="true" aria-label="Path to Josh Freese">' +
+        '<p class="ro-path-title">Path to Josh Freese</p>' +
+        `<p class="ro-path-summary">${pathDetails.summary}</p>` +
+        (pathDetails.hops.length
+          ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${hop}</li>`).join('') + '</ul>'
+          : '') +
+        '</section>' +
+        '<p class="ro-hint">Local mockup detail panel \u2014 nothing is fetched or persisted remotely.</p>';
       for (const b of readout.querySelectorAll('[data-go]')) {
         b.addEventListener('click', () => selectNode(b.getAttribute('data-go')));
       }
@@ -1206,10 +1154,48 @@ if (typeof document !== 'undefined') {
       showToast(ui.interactive ? 'Interactivity on — drag cards to rearrange.' : 'Interactivity off — cards locked in place.');
     }
 
+    /* ================= local board snapshot / actions ================= */
+
+    function currentSnapshot() {
+      const selected = ui.selected ? byId.get(ui.selected) : null;
+      return freezeBoardSnapshot(graphModel, selected, ui.path);
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(area);
+      return ok;
+    }
+
+    function downloadSnapshot() {
+      const payload = JSON.stringify(currentSnapshot(), null, 2);
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'freese-index-board.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
     /* ================= chrome buttons ================= */
 
     document.getElementById('btn-back').addEventListener('click', () => {
-      showToast('Back — this mockup has no history stack (no network).');
+      showToast('Back — this mockup has no history stack (local only).');
     });
     document.getElementById('btn-dim').addEventListener('click', toggleDim);
     document.getElementById('btn-zoom-in').addEventListener('click', () => {
@@ -1221,22 +1207,40 @@ if (typeof document !== 'undefined') {
     document.getElementById('btn-fit').addEventListener('click', () => { fitView(true); view.fitted = true; });
     document.getElementById('btn-interact').addEventListener('click', toggleInteractive);
 
-    const ACTION_MSGS = {
-      report: 'Report board — mock only, nothing was sent.',
-      discussion: 'Discussion: 0 comments. Mock panel, no network.',
-      save: 'Saved to this browser (local mock).',
-      share: 'Share link copied to clipboard (mock URL).',
-      copy: 'Copied to My Boards (local mock).',
-    };
     for (const btn of document.querySelectorAll('.act')) {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const action = btn.getAttribute('data-action');
-        if (action === 'share') {
-          try {
-            navigator.clipboard && navigator.clipboard.writeText('https://example.invalid/freese-index-mockup');
-          } catch (_) { /* local mock — ignore */ }
+        try {
+          if (action === 'save') {
+            downloadSnapshot();
+            showToast('Downloaded local board JSON snapshot.');
+            return;
+          }
+          if (action === 'copy') {
+            const ok = await copyText(JSON.stringify(currentSnapshot(), null, 2));
+            showToast(ok ? 'Copied local board snapshot JSON.' : 'Could not copy — snapshot still available via Save.');
+            return;
+          }
+          if (action === 'share') {
+            const shareUrl = freezeLocalShareUrl(ui.selected);
+            const ok = await copyText(shareUrl);
+            showToast(ok
+              ? 'Copied local board URL (hash link, no network).'
+              : 'Local-only board — copy the page URL from the address bar.');
+            return;
+          }
+          if (action === 'report') {
+            showToast('Report stays local — nothing was sent.');
+            return;
+          }
+          if (action === 'discussion') {
+            showToast('Discussion is local-only here (0 comments, no network).');
+            return;
+          }
+          showToast('Local mock action.');
+        } catch (_) {
+          showToast('Local action failed in this browser.');
         }
-        showToast(ACTION_MSGS[action] || 'Mock action.');
       });
     }
 
@@ -1276,6 +1280,14 @@ if (typeof document !== 'undefined') {
       renderLabels();
     }
 
+    function applyHashSelection() {
+      const hash = String(location.hash || '').replace(/^#/, '');
+      if (!hash) return;
+      const params = new URLSearchParams(hash.includes('=') ? hash : `node=${hash}`);
+      const nodeId = params.get('node');
+      if (nodeId && byId.has(nodeId)) selectNode(nodeId);
+    }
+
     /* ================= boot ================= */
 
     buildNodes();
@@ -1285,11 +1297,25 @@ if (typeof document !== 'undefined') {
     updateReadout(null);
 
     window.__freezeIndexBoard = {
-      selectNode: (id) => selectNode(id),
+      selectNode: (id) => selectNode(typeof id === 'object' ? id.id : id),
       getSelectedNode: () => (ui.selected ? byId.get(ui.selected) || ui.selected : null),
+      getPath: () => ui.path,
       centerNode,
       render: renderBoard,
+      snapshot: currentSnapshot,
     };
+
+    freezeStartSearch(graphModel, (node) => {
+      const bridge = freezeIndexBoardBridge();
+      if (bridge && typeof bridge.selectNode === 'function') {
+        bridge.selectNode(freezeNodeId(node));
+      } else {
+        selectNode(freezeNodeId(node));
+      }
+      centerNode(node);
+    });
+
+    applyHashSelection();
 
     let resizeTimer = null;
     window.addEventListener('resize', () => {
@@ -1302,7 +1328,24 @@ if (typeof document !== 'undefined') {
   })();
 }
 
-/* allow the graph data to be unit-checked under Node */
+/* allow the graph helpers to be unit-checked under Node */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { TYPES, NODES, EDGES, finalizeNodes };
+  module.exports = {
+    TYPES,
+    NODES,
+    EDGES,
+    finalizeNodes,
+    freezeGraphModel,
+    freezeNormalizeEdgeMeta,
+    freezeShortestPath,
+    freezePathSummary,
+    freezeSearchNodes,
+    freezeNodeCoordinates,
+    freezeConnectedAffiliations,
+    freezeBoardSnapshot,
+    freezeLocalShareUrl,
+    freezeResolveNode,
+    freezeDescribeHop,
+    freezeHighlightPath,
+  };
 }
