@@ -51,7 +51,7 @@ async function main() {
     maxY = Math.max(maxY, n.position.y + h);
   }
 
-  const pad = 3600;
+  const pad = 16000;
   const srcW = Math.max(1, maxX - minX);
   const srcH = Math.max(1, maxY - minY);
   // Keep the imported cluster compact; open cork around it comes from pad (not from stretching notes).

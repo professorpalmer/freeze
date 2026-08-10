@@ -456,9 +456,12 @@ function freezeLocalShareUrl(selectedId, opts) {
   return url.toString();
 }
 
+/** Empty cork around the note cluster — room to pin without hitting the edge. */
+const OPEN_BOARD_MARGIN = 16000;
+
 /** Grow cork so content has open margin on every side (room to pin more notes). */
 function freezeEnsureOpenBoardMargin(nodes, world, marginPx) {
-  const margin = Number.isFinite(marginPx) ? marginPx : 3600;
+  const margin = Number.isFinite(marginPx) ? marginPx : OPEN_BOARD_MARGIN;
   const list = Array.isArray(nodes) ? nodes : [];
   const next = world && world.w && world.h ? { w: world.w, h: world.h } : { w: 2000, h: 1400 };
   if (!list.length) {
@@ -639,7 +642,7 @@ let BOARD_WORLD = (BOARD.world && BOARD.world.w && BOARD.world.h)
   : { w: 2000, h: 1400 };
 {
   // Room to pin — imported boards were cork-tight; open a huge margin on every side.
-  const opened = freezeEnsureOpenBoardMargin(NODES, BOARD_WORLD, 3600);
+  const opened = freezeEnsureOpenBoardMargin(NODES, BOARD_WORLD, OPEN_BOARD_MARGIN);
   BOARD_WORLD = opened.world;
 }
 
@@ -785,7 +788,7 @@ if (typeof document !== 'undefined') {
     }
 
     function expandWorldIfNeeded() {
-      const opened = freezeEnsureOpenBoardMargin(NODES, WORLD, 3600);
+      const opened = freezeEnsureOpenBoardMargin(NODES, WORLD, OPEN_BOARD_MARGIN);
       if (opened.world.w !== WORLD.w || opened.world.h !== WORLD.h || opened.shifted) {
         applyWorldSize(opened.world);
         if (opened.shifted) {
@@ -1211,14 +1214,15 @@ if (typeof document !== 'undefined') {
         minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
       }
-      const pad = 90;
+      // Show empty cork around the cluster so Fit doesn't look wall-to-wall notes.
+      const pad = Math.min(2800, Math.max(900, Math.round(OPEN_BOARD_MARGIN * 0.15)));
       const bw = maxX - minX + pad * 2, bh = maxY - minY + pad * 2;
       const cw = svg.clientWidth, ch = svg.clientHeight;
-      view.scale = clamp(Math.min(cw / bw, ch / bh), 0.05, 1.6);
+      view.scale = clamp(Math.min(cw / bw, ch / bh), 0.02, 1.6);
       view.tx = (cw - bw * view.scale) / 2 - (minX - pad) * view.scale;
       view.ty = (ch - bh * view.scale) / 2 - (minY - pad) * view.scale;
       applyTransform();
-      if (announce) showToast('View fitted to the board.');
+      if (announce) showToast('Fitted with open cork — pan out to pin more.');
     }
 
     function clampPan() {
@@ -1229,7 +1233,7 @@ if (typeof document !== 'undefined') {
     }
 
     function zoomAt(cx, cy, factor) {
-      const ns = clamp(view.scale * factor, 0.05, 4);
+      const ns = clamp(view.scale * factor, 0.02, 4);
       const k = ns / view.scale;
       view.tx = cx - (cx - view.tx) * k;
       view.ty = cy - (cy - view.ty) * k;
