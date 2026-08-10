@@ -649,9 +649,11 @@ body.has-active .strings-tier-core { opacity: 0.38; }
   transition: opacity 0.12s ease;
 }
 body.lod-far .lod-canvas { opacity: 1; }
-body.lod-far .node .lbl,
-body.lod-far .node .sub,
-body.lod-far .node .pin,
+/* Far zoom: canvas owns dots + names + yarn. Never stack SVG chips under screen-space labels
+   (that "names floating off stickies" weirdness between zoom bands). */
+body.lod-far .node {
+  visibility: hidden;
+}
 body.lod-far .edge-label {
   display: none;
 }
@@ -667,10 +669,6 @@ body.lod-far .strings-path {
 body.lod-far:not(.has-active) .strings-active,
 body.lod-far:not(.has-active) .strings-path {
   opacity: 0;
-}
-/* Cosmos: stickies become a constellation — canvas owns dots + hub names. */
-body.lod-cosmos .node {
-  visibility: hidden;
 }
 /* Off-viewport notes stay mounted but skipped by the compositor */
 .node.is-culled {
