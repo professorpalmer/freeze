@@ -421,33 +421,34 @@ body.linking #graph { cursor: crosshair; }
     linear-gradient(180deg, rgba(40, 24, 10, 0.12), transparent 18%, transparent 78%, rgba(28, 14, 6, 0.28));
 }
 
-/* strings — red yarn */
+/* strings — red yarn (non-scaling stroke so yarn stays visible when zoomed out) */
 .strings {
   fill: none;
   stroke: var(--yarn);
-  stroke-width: 1.85;
+  stroke-width: 1.65;
   stroke-linecap: round;
   stroke-dasharray: 11 1.6 3 1.6;
-  opacity: 0.72;
+  opacity: 0.78;
   transition: opacity 0.22s ease;
+  vector-effect: non-scaling-stroke;
 }
 .strings-tier-related {
-  opacity: 0.38;
-  stroke-width: 1.35;
+  opacity: 0.55;
+  stroke-width: 1.25;
   stroke: #b33a32;
 }
 .strings-tier-strong {
-  opacity: 0.58;
-  stroke-width: 1.7;
+  opacity: 0.7;
+  stroke-width: 1.55;
 }
 .strings-tier-core {
-  opacity: 0.78;
-  stroke-width: 2.05;
+  opacity: 0.88;
+  stroke-width: 1.9;
   filter: drop-shadow(0 0 1.5px rgba(180, 30, 25, 0.35));
 }
 .strings-active {
   opacity: 0;
-  stroke-width: 2.8;
+  stroke-width: 2.6;
   stroke: var(--yarn-bright);
   stroke-dasharray: none;
   filter: drop-shadow(0 0 5px rgba(229, 57, 53, 0.55));
@@ -455,7 +456,7 @@ body.linking #graph { cursor: crosshair; }
 body.has-active .strings-active { opacity: 0.95; }
 .strings-path {
   opacity: 0;
-  stroke-width: 2.6;
+  stroke-width: 2.4;
   stroke: #ff5252;
   stroke-dasharray: 14 4;
   filter: drop-shadow(0 0 4px rgba(229, 57, 53, 0.5));
@@ -463,6 +464,11 @@ body.has-active .strings-active { opacity: 0.95; }
   animation: yarn-pulse 1.4s ease-in-out infinite;
 }
 body.has-active .strings-path { opacity: 0.95; }
+
+/* When a note is selected, keep the full web faintly visible under the highlight */
+body.has-active .strings-tier-related { opacity: 0.22; }
+body.has-active .strings-tier-strong { opacity: 0.3; }
+body.has-active .strings-tier-core { opacity: 0.36; }
 
 @keyframes yarn-pulse {
   0%, 100% { stroke-opacity: 0.85; }
