@@ -461,8 +461,9 @@ const OPEN_BOARD_MARGIN = 16000;
 /** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
 const ZOOM_MIN = 0.0008;
 const ZOOM_MAX = 8;
-const LOD_FAR_SCALE = 0.55;   // canvas names + yarn
-const LOD_COSMOS_SCALE = 0.085; // constellation dots; whole board fits in view
+const LOD_FAR_SCALE = 0.55;   // canvas names + yarn (stickies hide)
+const LOD_COSMOS_SCALE = 0.18; // dots + hub names only — kills the 10% name-soup blob
+const LOD_LABEL_MIN_SEP = 26; // screen px — refuse overlapping far-zoom labels
 
 /** Grow cork so content has open margin on every side (room to pin more notes). */
 function freezeEnsureOpenBoardMargin(nodes, world, marginPx) {
@@ -1039,23 +1040,25 @@ if (typeof document !== 'undefined') {
           || 'Georgia, "Times New Roman", serif';
       }
 
+      // Pin dots under everything — stays readable when names cull out.
+      for (const n of visible) {
+        const sx = n.cx * s + tx;
+        const sy = n.cy * s + ty;
+        if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
+        const r = n.big ? (cosmos ? 3 : 2.4) : (cosmos ? (s > 0.08 ? 2 : 1) : 1.6);
+        ctx.fillStyle = n.pin || n.color || '#c62828';
+        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+      }
+
       if (cosmos) {
-        // Constellation — fillRect dots beat arc(); hub names only.
-        for (const n of visible) {
-          const sx = n.cx * s + tx;
-          const sy = n.cy * s + ty;
-          if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
-          const r = n.big ? 3 : (s > 0.04 ? 2 : 1);
-          ctx.fillStyle = n.pin || n.color || '#c62828';
-          ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-        }
+        // Hub / selection names only — never stamp every note at globe zoom.
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.font = '600 11px ' + lodFontFamily;
         ctx.lineWidth = 3;
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
         for (const n of visible) {
-          if (!n.big) continue;
+          if (!n.big && n.id !== ui.selected) continue;
           const sx = n.cx * s + tx;
           const sy = n.cy * s + ty + 5;
           if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
@@ -1066,19 +1069,44 @@ if (typeof document !== 'undefined') {
         return;
       }
 
+      // Far zoom: collision-cull screen-space names so they never melt into a white blob.
+      const labelCandidates = visible.slice().sort((a, b) => {
+        const aPri = (a.id === ui.selected ? 3 : 0) + (a.big ? 2 : 0);
+        const bPri = (b.id === ui.selected ? 3 : 0) + (b.big ? 2 : 0);
+        if (bPri !== aPri) return bPri - aPri;
+        return (a.name || '').length - (b.name || '').length;
+      });
+      const cell = LOD_LABEL_MIN_SEP;
+      const occupied = new Set();
+      const canPlace = (sx, sy, force) => {
+        const gx = Math.floor(sx / cell);
+        const gy = Math.floor(sy / cell);
+        if (!force) {
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              if (occupied.has((gx + dx) + ',' + (gy + dy))) return false;
+            }
+          }
+        }
+        occupied.add(gx + ',' + gy);
+        return true;
+      };
+
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '600 11px ' + lodFontFamily;
-      for (const n of visible) {
+      for (const n of labelCandidates) {
         const sx = n.cx * s + tx;
         const sy = (n.cy + (n.big ? 4 : 2)) * s + ty;
         if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
+        const force = n.id === ui.selected || n.big;
+        if (!canPlace(sx, sy, force)) continue;
         ctx.lineWidth = 3.2;
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.9)';
         ctx.strokeText(n.name, sx, sy);
         ctx.fillStyle = n.ink || '#2a1a0c';
         ctx.fillText(n.name, sx, sy);
-        if (n.big && n.role) {
+        if (n.big && n.role && s > 0.32) {
           ctx.font = '500 9px ' + lodFontFamily;
           ctx.strokeText(n.role, sx, sy + 12);
           ctx.fillText(n.role, sx, sy + 12);
@@ -1303,15 +1331,15 @@ if (typeof document !== 'undefined') {
         minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
       }
-      // Show empty cork around the cluster so Fit doesn't look wall-to-wall notes.
-      const pad = Math.min(2800, Math.max(900, Math.round(OPEN_BOARD_MARGIN * 0.15)));
+      // Frame the note cluster tightly — empty cork is for panning, not the default shot.
+      const pad = 420;
       const bw = maxX - minX + pad * 2, bh = maxY - minY + pad * 2;
       const cw = svg.clientWidth, ch = svg.clientHeight;
       view.scale = clamp(Math.min(cw / bw, ch / bh), ZOOM_MIN, 1.6);
       view.tx = (cw - bw * view.scale) / 2 - (minX - pad) * view.scale;
       view.ty = (ch - bh * view.scale) / 2 - (minY - pad) * view.scale;
       applyTransform();
-      if (announce) showToast('Fitted — keep zooming out for the full cork cosmos.');
+      if (announce) showToast('Fitted to notes — zoom out for open cork.');
     }
 
     /** Grow cork when the camera approaches the edge so the board feels endless. */
