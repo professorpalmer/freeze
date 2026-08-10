@@ -1175,6 +1175,7 @@ if (typeof document !== 'undefined') {
       document.body.classList.toggle('has-active', !!id);
       renderEdges();
       applyLabelHighlights();
+      scheduleFrame({ lodPaint: true });
     }
 
     function setPathForNode(id) {
