@@ -485,6 +485,28 @@ body.chrome-collapsed #btn-chrome {
   gap: 8px;
   margin-top: 12px;
 }
+.modal-actions-split {
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-actions-end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.btn-danger {
+  color: #7a241c;
+  border-color: rgba(198, 40, 40, 0.35);
+}
+.btn-danger:hover {
+  background: rgba(198, 40, 40, 0.1);
+}
+.ro-top-actions {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.ro-top-actions .btn { font-size: 12.5px; padding: 7px 12px; }
 
 .ro-attachments {
   margin: 0 0 10px;

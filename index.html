@@ -117,10 +117,10 @@
       </button>
     </div>
 
-    <!-- Add-note modal (edit mode) -->
+    <!-- Add / edit note modal -->
     <div class="modal" id="note-modal" hidden>
       <form class="modal-card" id="note-form" autocomplete="off">
-        <h2 class="modal-title">Add sticky note</h2>
+        <h2 class="modal-title" id="note-modal-title">Add sticky note</h2>
         <label class="modal-field">Name
           <input id="note-name" name="name" type="text" required maxlength="120" placeholder="Person, band, or project">
         </label>
@@ -137,7 +137,7 @@
         </label>
         <div class="modal-field">
           <span class="modal-label-row">Connect yarn to</span>
-          <p class="modal-hint">Search the board — pick Aaron Turner, Greg Lake, a band, whatever’s already pinned. Yarn stretches when you hit Pin note.</p>
+          <p class="modal-hint" id="note-connect-hint">Search the board — pick people or bands already pinned. Yarn updates when you save.</p>
           <div class="connect-picker">
             <input id="note-connect-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search people, bands, projects…">
             <ul id="note-connect-suggest" class="connect-suggest" role="listbox" hidden></ul>
@@ -149,9 +149,12 @@
           <p class="modal-hint">Optional https links for the info panel — not file uploads.</p>
           <div id="note-attachments" class="attach-list"></div>
         </div>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" id="note-cancel">Cancel</button>
-          <button type="submit" class="btn" id="note-save">Pin note</button>
+        <div class="modal-actions modal-actions-split">
+          <button type="button" class="btn btn-ghost btn-danger" id="note-delete" hidden>Delete note</button>
+          <div class="modal-actions-end">
+            <button type="button" class="btn btn-ghost" id="note-cancel">Cancel</button>
+            <button type="submit" class="btn" id="note-save">Pin note</button>
+          </div>
         </div>
       </form>
     </div>

@@ -781,9 +781,14 @@ if (typeof document !== 'undefined') {
     const noteConnectInput = document.getElementById('note-connect-input');
     const noteConnectSuggest = document.getElementById('note-connect-suggest');
     const noteConnectChips = document.getElementById('note-connect-chips');
+    const noteModalTitle = document.getElementById('note-modal-title');
+    const noteConnectHint = document.getElementById('note-connect-hint');
+    const noteSaveBtn = document.getElementById('note-save');
+    const noteDeleteBtn = document.getElementById('note-delete');
     const pendingConnectIds = new Set();
     let connectSuggestItems = [];
     let connectSuggestIndex = -1;
+    let editingNoteId = null;
     const modeBtn = document.getElementById('btn-mode');
     const modeLabel = document.getElementById('mode-label');
     const chromeBtn = document.getElementById('btn-chrome');
@@ -1628,6 +1633,11 @@ if (typeof document !== 'undefined') {
       const attachments = Array.isArray(n.attachments) ? n.attachments.filter((a) => a && (a.url || a.label)) : [];
 
       readout.innerHTML =
+        (ui.editing
+          ? '<div class="ro-top-actions">' +
+            '<button type="button" class="btn" data-edit="edit-note">Edit note</button>' +
+            '</div>'
+          : '') +
         '<p class="ro-kicker">' + (ui.selected === id ? 'Selected subject' : 'Subject') + '</p>' +
         `<h2>${escapeHtml(n.name)}</h2>` +
         `<p class="ro-role">${escapeHtml(n.role || '')}</p>` +
@@ -1666,11 +1676,7 @@ if (typeof document !== 'undefined') {
           : '') +
         '</section>' +
         (ui.editing
-          ? '<div class="ro-edit-actions">' +
-            '<button type="button" class="btn" data-edit="link">Link yarn</button>' +
-            '<button type="button" class="btn btn-ghost" data-edit="delete-note">Delete note</button>' +
-            '<button type="button" class="btn btn-ghost" data-edit="clear-yarn">Clear yarn</button>' +
-            '</div>'
+          ? ''
           : '<p class="ro-hint">Edits auto-save in this browser only. Save board bookmarks a checkpoint. Share view-only is always the public board.</p>');
       for (const b of readout.querySelectorAll('[data-go]')) {
         b.addEventListener('click', () => selectNode(b.getAttribute('data-go')));
@@ -1913,7 +1919,7 @@ if (typeof document !== 'undefined') {
       }
       setEditorChrome(!ui.editing);
       showToast(ui.editing
-        ? 'Edit mode — drag notes, Add note, Link yarn, Reorganize.'
+        ? 'Edit mode — drag notes, Add note, or Edit note on the info pane.'
         : 'Browse mode — notes locked. Pan and zoom only.');
     }
 
@@ -1956,20 +1962,22 @@ if (typeof document !== 'undefined') {
 
     function handleEditAction(action, id) {
       if (ui.viewOnly || !ui.editing) return;
-      if (action === 'link') {
-        ui.linkFrom = id;
-        document.body.classList.add('linking');
-        showToast('Click another note to stretch yarn.');
+      if (action === 'edit-note') {
+        openNoteModal(id);
+      }
+    }
+
+    function startEditSelectedNote() {
+      if (ui.viewOnly) {
+        showToast('View-only link — editing disabled.');
         return;
       }
-      if (action === 'delete-note') {
-        if (!window.confirm('Delete this sticky note and its yarn?')) return;
-        deleteNote(id);
+      if (!ui.selected) {
+        showToast('Select a note first.');
         return;
       }
-      if (action === 'clear-yarn') {
-        clearYarnFor(id);
-      }
+      if (!ui.editing) setEditorChrome(true);
+      openNoteModal(ui.selected);
     }
 
     function completeLink(targetId) {
@@ -2065,6 +2073,7 @@ if (typeof document !== 'undefined') {
       const scored = [];
       for (const n of NODES) {
         if (pendingConnectIds.has(n.id)) continue;
+        if (editingNoteId && n.id === editingNoteId) continue;
         const name = normalizeConnectQuery(n.name);
         if (!name) continue;
         let score = -1;
@@ -2166,14 +2175,51 @@ if (typeof document !== 'undefined') {
       }
     }
 
-    function openNoteModal() {
+    function openNoteModal(nodeId) {
       if (!ui.editing || !noteModal) return;
+      const existing = nodeId ? (byId.get(nodeId) || NODES.find((n) => n.id === nodeId)) : null;
+      editingNoteId = existing ? existing.id : null;
       noteForm.reset();
       pendingConnectIds.clear();
+
+      if (existing) {
+        document.getElementById('note-name').value = existing.name || '';
+        document.getElementById('note-color').value = existing.type || 'yellow';
+        document.getElementById('note-blurb').value = existing.blurb || '';
+        for (const e of EDGES) {
+          if (e.from === existing.id) pendingConnectIds.add(e.to);
+          else if (e.to === existing.id) pendingConnectIds.add(e.from);
+        }
+        if (noteAttachments) {
+          noteAttachments.textContent = '';
+          const attaches = Array.isArray(existing.attachments) ? existing.attachments : [];
+          if (attaches.length) {
+            for (const a of attaches) addAttachmentRow(a.label || '', a.url || '');
+          }
+        }
+        if (noteModalTitle) noteModalTitle.textContent = 'Edit sticky note';
+        if (noteConnectHint) {
+          noteConnectHint.textContent =
+            'Search to add yarn. Remove a chip to drop that connection. Save applies the changes.';
+        }
+        if (noteSaveBtn) noteSaveBtn.textContent = 'Save note';
+        if (noteDeleteBtn) {
+          const joshId = freezeJoshId();
+          noteDeleteBtn.hidden = existing.id === joshId;
+        }
+      } else {
+        if (noteAttachments) noteAttachments.textContent = '';
+        if (noteModalTitle) noteModalTitle.textContent = 'Add sticky note';
+        if (noteConnectHint) {
+          noteConnectHint.textContent =
+            'Search the board — pick people or bands already pinned. Yarn stretches when you save.';
+        }
+        if (noteSaveBtn) noteSaveBtn.textContent = 'Pin note';
+        if (noteDeleteBtn) noteDeleteBtn.hidden = true;
+      }
+
       renderConnectChips();
       hideConnectSuggestions();
-      if (noteAttachments) noteAttachments.textContent = '';
-      // Web links optional — start empty so Connect is the obvious path.
       noteModal.hidden = false;
       document.getElementById('note-name').focus();
     }
@@ -2181,8 +2227,45 @@ if (typeof document !== 'undefined') {
     function closeNoteModal() {
       if (!noteModal) return;
       noteModal.hidden = true;
+      editingNoteId = null;
       pendingConnectIds.clear();
       hideConnectSuggestions();
+      if (noteDeleteBtn) noteDeleteBtn.hidden = true;
+    }
+
+    function syncYarnForNode(nodeId, connectIds) {
+      const joshId = freezeJoshId();
+      const wanted = new Set((connectIds || []).filter((id) => id && id !== nodeId));
+      let added = 0;
+      let removed = 0;
+
+      for (let i = EDGES.length - 1; i >= 0; i--) {
+        const e = EDGES[i];
+        const other = e.from === nodeId ? e.to : (e.to === nodeId ? e.from : null);
+        if (!other) continue;
+        if (wanted.has(other)) continue;
+        EDGES.splice(i, 1);
+        removed += 1;
+      }
+
+      for (const toId of wanted) {
+        const exists = EDGES.some((edge) =>
+          (edge.from === nodeId && edge.to === toId) || (edge.from === toId && edge.to === nodeId)
+        );
+        if (exists) continue;
+        const other = byId.get(toId) || NODES.find((n) => n.id === toId);
+        const touchesJosh = nodeId === joshId || toId === joshId;
+        EDGES.push({
+          id: newId('e'),
+          from: nodeId,
+          to: toId,
+          label: other ? `linked to ${other.name}` : 'connected',
+          tier: touchesJosh ? 'core' : 'related',
+          strength: touchesJosh ? 'high' : 'medium',
+        });
+        added += 1;
+      }
+      return { added, removed };
     }
 
     function submitNoteForm(e) {
@@ -2199,6 +2282,34 @@ if (typeof document !== 'undefined') {
         url: a.url,
       }));
       const connectIds = [...pendingConnectIds];
+
+      if (editingNoteId) {
+        const node = byId.get(editingNoteId) || NODES.find((n) => n.id === editingNoteId);
+        if (!node) {
+          showToast('That note is gone.');
+          closeNoteModal();
+          return;
+        }
+        node.name = name;
+        node.type = color;
+        node.blurb = blurb;
+        node.attachments = attachments;
+        const yarn = syncYarnForNode(node.id, connectIds);
+        const editId = node.id;
+        closeNoteModal();
+        refreshBoard({ persist: true });
+        selectNode(editId);
+        const yarnBits = [];
+        if (yarn.added) yarnBits.push(`+${yarn.added} yarn`);
+        if (yarn.removed) yarnBits.push(`-${yarn.removed} yarn`);
+        showToast(
+          yarnBits.length
+            ? `Updated “${name}” (${yarnBits.join(', ')}).`
+            : `Updated “${name}”.`
+        );
+        return;
+      }
+
       const cx = (-view.tx + svg.clientWidth / 2) / view.scale;
       const cy = (-view.ty + svg.clientHeight / 2) / view.scale;
       const node = {
@@ -2212,34 +2323,15 @@ if (typeof document !== 'undefined') {
         attachments,
       };
       NODES.push(node);
-      const joshId = freezeJoshId();
-      let linked = 0;
-      for (const toId of connectIds) {
-        if (!toId || toId === node.id) continue;
-        const exists = EDGES.some((edge) =>
-          (edge.from === node.id && edge.to === toId) || (edge.from === toId && edge.to === node.id)
-        );
-        if (exists) continue;
-        const other = byId.get(toId) || NODES.find((n) => n.id === toId);
-        const touchesJosh = node.id === joshId || toId === joshId;
-        EDGES.push({
-          id: newId('e'),
-          from: node.id,
-          to: toId,
-          label: other ? `linked to ${other.name}` : 'connected',
-          tier: touchesJosh ? 'core' : 'related',
-          strength: touchesJosh ? 'high' : 'medium',
-        });
-        linked += 1;
-      }
+      const yarn = syncYarnForNode(node.id, connectIds);
       closeNoteModal();
       expandWorldIfNeeded();
       refreshBoard({ persist: true });
       selectNode(node.id);
       centerNode(node.id);
       showToast(
-        linked
-          ? `Pinned “${name}” with ${linked} yarn link${linked === 1 ? '' : 's'}.`
+        yarn.added
+          ? `Pinned “${name}” with ${yarn.added} yarn link${yarn.added === 1 ? '' : 's'}.`
           : `Pinned “${name}”.`
       );
     }
@@ -2478,6 +2570,15 @@ if (typeof document !== 'undefined') {
     if (noteForm) noteForm.addEventListener('submit', submitNoteForm);
     const noteCancel = document.getElementById('note-cancel');
     if (noteCancel) noteCancel.addEventListener('click', closeNoteModal);
+    if (noteDeleteBtn) {
+      noteDeleteBtn.addEventListener('click', () => {
+        if (!editingNoteId) return;
+        if (!window.confirm('Delete this sticky note and its yarn?')) return;
+        const id = editingNoteId;
+        closeNoteModal();
+        deleteNote(id);
+      });
+    }
     const noteAttachAdd = document.getElementById('note-attach-add');
     if (noteAttachAdd) noteAttachAdd.addEventListener('click', () => addAttachmentRow('', ''));
     if (noteConnectInput) {
