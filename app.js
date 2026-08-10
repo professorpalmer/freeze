@@ -284,23 +284,23 @@ function freezeSearchNodes(model, query, limit) {
     const role = freezeNodeRole(node).toLowerCase();
     const type = freezeNodeType(node).toLowerCase();
     const typeKey = freezeNodeTypeKey(node).toLowerCase();
-    const blurb = freezeNodeBlurb(node).toLowerCase();
-    const affiliations = freezeConnectedAffiliations(node, model);
-    const affil = String(affiliations || '').toLowerCase();
 
+    // Match the subject itself only — not yarn neighbors (affiliations poisoned "Emma Ruth Rundle").
     let score = 0;
     if (name === q) score = 500;
     else if (name.startsWith(q)) score = 400;
     else if (name.includes(q)) score = 300;
     else if (role.startsWith(q) || role.includes(` ${q}`)) score = 180;
     else if (role.includes(q)) score = 140;
-    else if (affil.includes(q)) score = 90;
-    else if (type.includes(q) || typeKey.includes(q)) score = 50;
-    else if (blurb.includes(q)) score = 30;
+    else if (type === q || typeKey === q) score = 50;
     else return;
 
     if (node.big) score += 20;
-    scored.push({ node, affiliations, score });
+    scored.push({
+      node,
+      affiliations: freezeConnectedAffiliations(node, model),
+      score,
+    });
   });
 
   scored.sort((a, b) => b.score - a.score || freezeNodeName(a.node).localeCompare(freezeNodeName(b.node)));
