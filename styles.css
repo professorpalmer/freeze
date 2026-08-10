@@ -103,10 +103,10 @@ body {
 .topbar {
   position: relative;
   z-index: 30;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   padding: 10px 16px;
   background:
     linear-gradient(180deg, rgba(247, 241, 225, 0.97), rgba(222, 202, 164, 0.94)),
@@ -122,26 +122,32 @@ body {
   min-height: 62px;
 }
 
-.topbar-left { display: flex; align-items: center; min-width: 0; }
+.topbar-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  justify-self: start;
+}
 
 .topbar-center {
   text-align: center;
   min-width: 0;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  max-width: min(52vw, 320px);
   pointer-events: none;
+  overflow: hidden;
 }
 
 .board-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: clamp(15px, 3.6vw, 28px);
   font-weight: 400;
   letter-spacing: 0.12em;
   text-indent: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink);
   text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.35);
 }
@@ -153,14 +159,18 @@ body {
   text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
+  justify-self: end;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 /* ---------- buttons ---------- */
@@ -1260,8 +1270,9 @@ body.interactive-drag .node { cursor: grabbing; }
 }
 
 @media (max-width: 620px) {
-  .topbar { padding: 8px 10px; min-height: 54px; }
-  .board-title { font-size: 18px; letter-spacing: 0.08em; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar { padding: 8px 10px; min-height: 54px; gap: 6px; }
+  .topbar-center { max-width: min(44vw, 168px); }
+  .board-title { font-size: 15px; letter-spacing: 0.06em; text-indent: 0.06em; }
   .toggle-label { display: none; }
   /* Keep Panels readable — unlabeled toggles made "hide shit" undiscoverable */
   #btn-chrome .toggle-label {
@@ -1270,6 +1281,7 @@ body.interactive-drag .node { cursor: grabbing; }
     font-weight: 800;
     letter-spacing: 0.04em;
   }
+  .topbar-right { gap: 6px; }
   .btn-ghost span { display: none; }
   .btn-ghost { padding: 7px 9px; }
   .btn-edit span,
