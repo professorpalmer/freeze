@@ -723,9 +723,9 @@ function finalizeNodes() {
   const byId = new Map();
   for (const n of NODES) {
     const type = TYPES[n.type] || TYPES.person;
-    // Tighter chips so desktop high-zoom stickies read as notes, not billboards.
-    n.h = n.big ? 46 : 32;
-    n.w = Math.max(64, 14 + n.name.length * 6.4 + (n.big ? 10 : 0));
+    // Tighter chips; width tracks Arial Black caps (wide glyphs).
+    n.h = n.big ? 44 : 30;
+    n.w = Math.max(58, 12 + n.name.length * 7.6 + (n.big ? 8 : 0));
     n.cx = n.x + n.w / 2;
     n.cy = n.y + n.h / 2;
     n.color = type.color;
@@ -1518,7 +1518,7 @@ if (typeof document !== 'undefined') {
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         lbl.setAttribute('class', 'lbl');
         lbl.setAttribute('x', n.w / 2);
-        lbl.setAttribute('y', n.big ? 26 : 21);
+        lbl.setAttribute('y', n.big ? 24 : 19);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', n.ink);
         lbl.textContent = noteFaceLabel(n.name);
@@ -1531,7 +1531,7 @@ if (typeof document !== 'undefined') {
           const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           sub.setAttribute('class', 'sub');
           sub.setAttribute('x', n.w / 2);
-          sub.setAttribute('y', 38);
+          sub.setAttribute('y', 36);
           sub.setAttribute('text-anchor', 'middle');
           sub.setAttribute('fill', n.ink);
           sub.textContent = noteFaceLabel(n.role);
