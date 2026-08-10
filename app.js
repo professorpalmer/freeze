@@ -3454,13 +3454,16 @@ if (typeof document !== 'undefined') {
       const ok = window.confirm(
         'Publish THIS browser board to the live public Freese Index?\n\n' +
         'Save board only checkpoints this device. Publish updates https://freeze-index.onrender.com/ for everyone.\n\n' +
-        'Passphrase is pre-filled for Traditionology.'
+        'If the direct publish link is asleep, a GitHub issue pack opens — click Submit new issue (title must stay [freese-publish]…).'
       );
       if (!ok) return;
 
       persistBoard(true);
       const snap = currentSnapshot();
       showToast('Publishing to public…');
+
+      // Host JSON early so the GitHub-issue fallback always has a BOARD_URL.
+      const hosted = await uploadBoardHost(snap);
 
       let lastErr = '';
       for (const endpoint of cfg.endpoints) {
@@ -3484,9 +3487,7 @@ if (typeof document !== 'undefined') {
         }
       }
 
-      // Durable fallback: host JSON + open GitHub issue for the apply-board Action.
-      showToast('Direct publish offline — preparing GitHub issue pack…');
-      const hosted = await uploadBoardHost(snap);
+      showToast('Direct publish offline — opening GitHub issue pack…');
       downloadSnapshot();
       const issueTitle = `[freese-publish] ${snap.meta.nodeCount} notes / ${snap.meta.edgeCount} edges`;
       const issueBody = [
@@ -3516,8 +3517,8 @@ if (typeof document !== 'undefined') {
         '&body=' + encodeURIComponent(issueBody.slice(0, 5500));
       try { window.open(newIssue, '_blank', 'noopener'); } catch (_) { /* ignore */ }
       showToast(hosted
-        ? `Publish API unreachable (${lastErr || 'offline'}). Copied pack + opened GitHub issue with BOARD_URL.`
-        : `Publish API unreachable (${lastErr || 'offline'}). Downloaded JSON — attach it on the opened GitHub issue.`);
+        ? `Copied pack + opened GitHub issue with BOARD_URL. Click Submit new issue (${lastErr || 'tunnel offline'}).`
+        : `Downloaded JSON — attach it on the opened GitHub issue, then Submit (${lastErr || 'tunnel offline'}).`);
     }
 
     function importBoardJsonFile(file) {
