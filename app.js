@@ -596,7 +596,7 @@ function freezeBuildSearchPanel(model, activate) {
   panel.setAttribute('aria-label', 'Search graph');
   panel.innerHTML =
     '<label for="freeze-search-input">Search people, bands, and projects</label>' +
-    '<input id="freeze-search-input" type="search" autocomplete="off" placeholder="Name, role, type, or affiliation" aria-controls="freeze-search-results">' +
+    '<input id="freeze-search-input" type="search" autocomplete="off" placeholder="Search by name or role" aria-controls="freeze-search-results">' +
     '<p id="freeze-search-count" class="freeze-search-count" aria-live="polite"></p>' +
     '<ul id="freeze-search-results" role="listbox" aria-label="Search results"></ul>';
   document.body.appendChild(panel);
@@ -613,7 +613,7 @@ function freezeBuildSearchPanel(model, activate) {
       results.setAttribute('aria-label', count.textContent);
       const empty = document.createElement('li');
       empty.className = 'freeze-search-empty';
-      empty.textContent = 'Type to filter by name, role, type, or affiliation';
+      empty.textContent = 'Type a name or role — results are that subject, not their yarn neighbors';
       results.appendChild(empty);
       return;
     }
