@@ -1453,7 +1453,7 @@ if (typeof document !== 'undefined') {
           `<span><i style="background:${TYPES.blue.color}"></i>Blue</span>` +
           `<span><i style="background:${TYPES.green.color}"></i>Green</span>` +
           '</div>' +
-          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> drag notes \u00b7 <kbd>Esc</kbd> clear</p>';
+          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit (move / add / yarn) \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>Esc</kbd> clear</p>';
         return;
       }
       const n = byId.get(id);
@@ -1549,7 +1549,7 @@ if (typeof document !== 'undefined') {
       drag.sx = e.clientX; drag.sy = e.clientY;
       drag.moved = false;
 
-      if (n && !ui.viewOnly && (ui.interactive || ui.editing)) {
+      if (n && !ui.viewOnly && ui.editing) {
         drag.mode = 'node'; drag.id = n.id; drag.nx = n.x; drag.ny = n.y;
         nodeEls.get(n.id).classList.add('dragging');
         document.body.classList.add('interactive-drag');
@@ -1610,7 +1610,7 @@ if (typeof document !== 'undefined') {
           ui.hovered = id;
           for (const [nid, g] of nodeEls) g.classList.toggle('hovered', nid === id);
           svg.style.cursor = n
-            ? ((ui.interactive || ui.editing || ui.linkFrom) ? 'pointer' : 'grab')
+            ? ((ui.editing || ui.linkFrom) ? 'pointer' : 'grab')
             : (ui.linkFrom ? 'crosshair' : 'grab');
         }
       }
@@ -1686,7 +1686,6 @@ if (typeof document !== 'undefined') {
         case '-': case '_': zoomAt(svg.clientWidth / 2, svg.clientHeight / 2, 0.8); break;
         case 'f': case 'F': case '0': fitView(true); break;
         case 'd': case 'D': toggleDim(); break;
-        case 'i': case 'I': toggleInteractive(); break;
         case 'e': case 'E': toggleEditing(); break;
         case 'p': case 'P': toggleChrome(); break;
         case 'a': case 'A': startAddNote(); break;
@@ -1714,17 +1713,25 @@ if (typeof document !== 'undefined') {
     function setEditorChrome(editing) {
       if (ui.viewOnly) editing = false;
       ui.editing = editing;
+      // Dragging notes is edit-mode only — leaving edit must lock the board.
+      ui.interactive = editing;
       document.body.classList.toggle('editing', editing);
+      document.body.classList.toggle('interactive', editing);
       if (modeBtn) modeBtn.setAttribute('aria-pressed', String(editing));
       if (modeLabel) modeLabel.textContent = editing ? 'Done editing' : 'Edit board';
       for (const el of document.querySelectorAll('.editor-only')) {
         el.hidden = !editing;
       }
-      if (editing && !ui.interactive) {
-        ui.interactive = true;
-        document.body.classList.add('interactive');
-        const interactBtn = document.getElementById('btn-interact');
-        if (interactBtn) interactBtn.setAttribute('aria-checked', 'true');
+      if (!editing) {
+        ui.linkFrom = null;
+        document.body.classList.remove('linking');
+        if (drag.mode === 'node' && drag.id) {
+          const g = nodeEls.get(drag.id);
+          if (g) g.classList.remove('dragging');
+          document.body.classList.remove('interactive-drag');
+          drag.mode = null;
+          drag.id = null;
+        }
       }
       updateReadout(ui.selected);
     }
@@ -1736,8 +1743,8 @@ if (typeof document !== 'undefined') {
       }
       setEditorChrome(!ui.editing);
       showToast(ui.editing
-        ? 'Edit mode on — use Add note, or Link yarn from a selected note.'
-        : 'Browse mode — board is read-only.');
+        ? 'Edit mode — drag notes, Add note, Link yarn, Reorganize.'
+        : 'Browse mode — notes locked. Pan and zoom only.');
     }
 
     function startAddNote() {
@@ -1775,17 +1782,6 @@ if (typeof document !== 'undefined') {
       document.getElementById('btn-dim').setAttribute('aria-checked', String(ui.dim));
       scheduleFrame({ lodPaint: true });
       showToast(ui.dim ? 'Yarn dimmed.' : 'Yarn restored.');
-    }
-
-    function toggleInteractive() {
-      if (ui.viewOnly) {
-        showToast('View-only link — dragging notes is off.');
-        return;
-      }
-      ui.interactive = !ui.interactive;
-      document.body.classList.toggle('interactive', ui.interactive);
-      document.getElementById('btn-interact').setAttribute('aria-checked', String(ui.interactive));
-      showToast(ui.interactive ? 'Drag notes on.' : 'Drag notes off.');
     }
 
     function handleEditAction(action, id) {
@@ -2133,7 +2129,6 @@ if (typeof document !== 'undefined') {
       zoomAt(svg.clientWidth / 2, svg.clientHeight / 2, 1 / 1.3); view.fitted = true;
     });
     document.getElementById('btn-fit').addEventListener('click', () => { fitView(true); view.fitted = true; });
-    document.getElementById('btn-interact').addEventListener('click', toggleInteractive);
     const addBtn = document.getElementById('btn-add-note');
     if (addBtn) addBtn.addEventListener('click', startAddNote);
     const reorgBtn = document.getElementById('btn-reorganize');
