@@ -511,7 +511,7 @@ const LOD_FAR_SCALE = 0.55;   // desktop: SVG hides; canvas owns
 const LOD_COSMOS_SCALE = 0.18; // constellation dots + hub names
 const LOD_LABEL_MIN_SEP = 26; // screen px — refuse overlapping far-zoom labels
 /** Mobile compact band: mini stickies grow from ~34% → ~80% before full SVG notes. */
-const LOD_MOBILE_SVG_HIDE = 0.80;
+const LOD_MOBILE_SVG_HIDE = 0.68;
 const LOD_MOBILE_COMPACT_FLOOR = 0.34;
 const LOD_MOBILE_COSMOS = 0.16;
 
@@ -1212,13 +1212,10 @@ if (typeof document !== 'undefined') {
     function paintCompactNotes(ctx, visible, s, tx, ty, w, h) {
       const span = Math.max(0.01, FAR_SCALE - COMPACT_FLOOR);
       const t = Math.max(0, Math.min(1, (s - COMPACT_FLOOR) / span));
-      const noteW = 22 + t * (MOBILE_LIGHT ? 62 : 70);
-      const noteH = 12 + t * (MOBILE_LIGHT ? 26 : 30);
-      const fontPx = Math.max(6, Math.round(6.5 + t * 4.2));
-      const pinR = 1.4 + t * 2.2;
-      const showText = noteW >= 36;
+      const pinR = 1.2 + t * 2.0;
       const panning = drag.mode === 'pan' || drag.mode === 'node';
-      const sep = Math.max(14, Math.round(noteW * 0.55));
+      // Placement grid tracks typical screen chip size, not a one-size fake width.
+      const sep = Math.max(12, Math.round(16 + t * 36));
 
       const candidates = visible.slice().sort((a, b) => {
         const aPri =
@@ -1251,9 +1248,11 @@ if (typeof document !== 'undefined') {
       const nextSticky = new Set();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
 
       for (const n of candidates) {
+        // Match real sticky geometry in screen space so long names keep their width.
+        const noteW = Math.max(26, Math.min(240, (Number(n.w) || 80) * s));
+        const noteH = Math.max(12, Math.min(42, (Number(n.h) || 30) * s));
         const sx = Math.round(n.cx * s + tx);
         const sy = Math.round(n.cy * s + ty);
         if (sx < -noteW || sy < -noteH || sx > w + noteW || sy > h + noteH) continue;
@@ -1263,8 +1262,8 @@ if (typeof document !== 'undefined') {
         if (!canPlace(sx, sy, force)) continue;
         nextSticky.add(n.id);
 
-        const hw = (n.big ? noteW * 1.12 : noteW) / 2;
-        const hh = (n.big ? noteH * 1.1 : noteH) / 2;
+        const hw = noteW / 2;
+        const hh = noteH / 2;
         const x0 = sx - hw;
         const y0 = sy - hh;
         const paper = n.paper || n.color || '#f7f1e1';
@@ -1272,27 +1271,44 @@ if (typeof document !== 'undefined') {
         const pin = n.pin || '#c62828';
 
         ctx.fillStyle = 'rgba(28, 16, 6, 0.28)';
-        ctx.fillRect(x0 + 1.5, y0 + 2, hw * 2, hh * 2);
+        ctx.fillRect(x0 + 1.5, y0 + 2, noteW, noteH);
         ctx.fillStyle = paper;
-        ctx.fillRect(x0, y0, hw * 2, hh * 2);
+        ctx.fillRect(x0, y0, noteW, noteH);
         ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(x0 + 0.5, y0 + 0.5, hw * 2 - 1, hh * 2 - 1);
+        ctx.strokeRect(x0 + 0.5, y0 + 0.5, noteW - 1, noteH - 1);
 
         ctx.beginPath();
         ctx.fillStyle = pin;
         ctx.arc(sx, y0 + pinR + 1.5, pinR, 0, Math.PI * 2);
         ctx.fill();
 
-        if (showText) {
-          const maxChars = Math.max(4, Math.floor(hw * 2 / (fontPx * 0.62)));
+        if (noteW >= 28 && noteH >= 11) {
           let label = noteFaceLabel(n.name);
-          if (label.length > maxChars) label = label.slice(0, Math.max(3, maxChars - 1)) + '\u2026';
-          ctx.lineWidth = Math.max(2, fontPx * 0.28);
+          let fontPx = Math.max(4.5, Math.min(n.big ? 9.5 : 8, noteH * 0.4));
+          const maxW = Math.max(12, noteW - 6);
+          ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
+          while (fontPx > 4.5 && ctx.measureText(label).width > maxW) {
+            fontPx -= 0.5;
+            ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
+          }
+          if (ctx.measureText(label).width > maxW) {
+            let trimmed = label;
+            while (trimmed.length > 5) {
+              trimmed = trimmed.slice(0, -1);
+              const trial = trimmed + '\u2026';
+              if (ctx.measureText(trial).width <= maxW) {
+                label = trial;
+                break;
+              }
+            }
+          }
+          const tyLabel = sy + pinR * 0.2;
+          ctx.lineWidth = Math.max(1.5, fontPx * 0.24);
           ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
-          ctx.strokeText(label, sx, sy + pinR * 0.35);
+          ctx.strokeText(label, sx, tyLabel);
           ctx.fillStyle = ink;
-          ctx.fillText(label, sx, sy + pinR * 0.35);
+          ctx.fillText(label, sx, tyLabel);
         }
       }
       stickyFarLabelIds = nextSticky;
@@ -1521,6 +1537,8 @@ if (typeof document !== 'undefined') {
         lbl.setAttribute('y', n.big ? 24 : 19);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', n.ink);
+        lbl.setAttribute('textLength', String(Math.max(16, n.w - 8)));
+        lbl.setAttribute('lengthAdjust', 'spacingAndGlyphs');
         lbl.textContent = noteFaceLabel(n.name);
 
         note.appendChild(chip);
@@ -1534,6 +1552,8 @@ if (typeof document !== 'undefined') {
           sub.setAttribute('y', 36);
           sub.setAttribute('text-anchor', 'middle');
           sub.setAttribute('fill', n.ink);
+          sub.setAttribute('textLength', String(Math.max(16, n.w - 10)));
+          sub.setAttribute('lengthAdjust', 'spacingAndGlyphs');
           sub.textContent = noteFaceLabel(n.role);
           note.appendChild(sub);
         }
