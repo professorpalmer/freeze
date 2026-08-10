@@ -2261,7 +2261,7 @@ if (typeof document !== 'undefined') {
     updateReadout(null);
     if (!ui.viewOnly) persistBoard(true); // keep expanded cork size in this browser
     showToast(ui.viewOnly
-      ? 'View-only board — pan, zoom, and search. Editing is off.'
+      ? 'View-only board — pan, deep-zoom, and search. Editing is off.'
       : 'Tip: Add note to post. Share board copies a view-only URL for friends.');
 
     window.__freezeIndexBoard = {
