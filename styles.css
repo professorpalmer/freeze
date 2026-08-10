@@ -282,7 +282,12 @@ body.editing .badge-mode svg { display: none; }
 body.view-only .badge-view-only { display: inline-flex; }
 body.view-only .btn-edit,
 body.view-only .btn-add,
-body.view-only .editor-only {
+body.view-only .editor-only,
+body.view-only [data-action="save"],
+body.view-only [data-action="revert"],
+body.view-only [data-action="copy"] {
+  display: none !important;
+}
   display: none !important;
 }
 .modal-hint {
@@ -469,44 +474,44 @@ body.linking #graph { cursor: crosshair; }
 .strings {
   fill: none;
   stroke: var(--yarn);
-  stroke-width: 1.5;
+  stroke-width: 2.5;
   stroke-linecap: round;
-  opacity: 0.72;
+  opacity: 0.78;
   transition: opacity 0.18s ease;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 .strings-tier-related {
-  opacity: 0.42;
-  stroke-width: 1.15;
+  opacity: 0.5;
+  stroke-width: 2.15;
   stroke: #b33a32;
 }
 .strings-tier-strong {
-  opacity: 0.58;
-  stroke-width: 1.4;
+  opacity: 0.66;
+  stroke-width: 2.4;
 }
 .strings-tier-core {
-  opacity: 0.78;
-  stroke-width: 1.7;
+  opacity: 0.84;
+  stroke-width: 2.7;
 }
 .strings-active {
   opacity: 0;
-  stroke-width: 2.4;
+  stroke-width: 3.2;
   stroke: var(--yarn-bright);
 }
 body.has-active .strings-active { opacity: 0.95; }
 .strings-path {
   opacity: 0;
-  stroke-width: 2.2;
+  stroke-width: 3;
   stroke: #ff5252;
   stroke-dasharray: 10 4;
   pointer-events: none;
 }
 body.has-active .strings-path { opacity: 0.95; }
 
-body.has-active .strings-tier-related { opacity: 0.18; }
-body.has-active .strings-tier-strong { opacity: 0.24; }
-body.has-active .strings-tier-core { opacity: 0.3; }
+body.has-active .strings-tier-related { opacity: 0.22; }
+body.has-active .strings-tier-strong { opacity: 0.3; }
+body.has-active .strings-tier-core { opacity: 0.38; }
 
 /* Far zoom: SVG drops text + bulk yarn; canvas paints screen-space names + culled yarn. */
 .lod-canvas {

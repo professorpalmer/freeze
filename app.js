@@ -382,6 +382,7 @@ function freezeBoardSnapshot(model, selected, path) {
 }
 
 const FREESE_STORAGE_KEY = 'freese-index-board-v1';
+const FREESE_CHECKPOINT_KEY = 'freese-index-board-checkpoint-v1';
 
 function freezeReadLocalBoard() {
   if (typeof localStorage === 'undefined') return null;
@@ -404,6 +405,36 @@ function freezeWriteLocalBoard(payload) {
   } catch (_) {
     return false;
   }
+}
+
+function freezeReadCheckpoint() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(FREESE_CHECKPOINT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.nodes) || !parsed.nodes.length) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function freezeWriteCheckpoint(payload) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(FREESE_CHECKPOINT_KEY, JSON.stringify(payload));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function freezeClearWorkingBoard() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(FREESE_STORAGE_KEY);
+  } catch (_) { /* ignore */ }
 }
 
 function freezeReadShareFlags() {
@@ -1009,13 +1040,13 @@ if (typeof document !== 'undefined') {
         ctx.lineJoin = 'round';
         const tiers = cosmos
           ? [
-              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.08)' : 'rgba(198, 40, 40, 0.28)', width: 0.9 },
-              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.42)', width: 1.15 },
+              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.36)', width: 1.9 },
+              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.5)', width: 2.15 },
             ]
           : [
-              { list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
-              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
-              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
+              { list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.1)' : 'rgba(179, 58, 50, 0.48)', width: 2.05 },
+              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.58)', width: 2.25 },
+              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.7)', width: 2.45 },
             ];
         for (const style of tiers) {
           ctx.beginPath();
@@ -1592,7 +1623,7 @@ if (typeof document !== 'undefined') {
             '<button type="button" class="btn btn-ghost" data-edit="delete-note">Delete note</button>' +
             '<button type="button" class="btn btn-ghost" data-edit="clear-yarn">Clear yarn</button>' +
             '</div>'
-          : '<p class="ro-hint">Local board — edits stay on this device until you Save / Export.</p>');
+          : '<p class="ro-hint">Edits auto-save in this browser only. Save board bookmarks a checkpoint. Share view-only is always the public board.</p>');
       for (const b of readout.querySelectorAll('[data-go]')) {
         b.addEventListener('click', () => selectNode(b.getAttribute('data-go')));
       }
@@ -2190,8 +2221,10 @@ if (typeof document !== 'undefined') {
     }
 
     function downloadSnapshot() {
+      const snap = currentSnapshot();
       persistBoard(true);
-      const payload = JSON.stringify(currentSnapshot(), null, 2);
+      freezeWriteCheckpoint(snap);
+      const payload = JSON.stringify(snap, null, 2);
       const blob = new Blob([payload], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -2201,6 +2234,26 @@ if (typeof document !== 'undefined') {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    }
+
+    function revertToLastSave() {
+      if (ui.viewOnly) {
+        showToast('View-only link — nothing to revert here.');
+        return;
+      }
+      const checkpoint = freezeReadCheckpoint();
+      const hasCheckpoint = !!checkpoint;
+      const msg = hasCheckpoint
+        ? 'Discard unsaved edits and restore your last Save board checkpoint?'
+        : 'No Save board checkpoint yet. Discard all local edits and reload the public Freese Index board?';
+      if (!window.confirm(msg)) return;
+      if (hasCheckpoint) {
+        freezeWriteLocalBoard(checkpoint);
+      } else {
+        freezeClearWorkingBoard();
+      }
+      showToast(hasCheckpoint ? 'Restoring last save…' : 'Restoring public board…');
+      location.reload();
     }
 
     /* ================= chrome buttons ================= */
@@ -2243,7 +2296,11 @@ if (typeof document !== 'undefined') {
         try {
           if (action === 'save') {
             downloadSnapshot();
-            showToast('Saved JSON snapshot (also stored in this browser).');
+            showToast('Saved checkpoint on this device (+ JSON download). Share URL stays the public board.');
+            return;
+          }
+          if (action === 'revert') {
+            revertToLastSave();
             return;
           }
           if (action === 'export-png') {

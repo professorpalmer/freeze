@@ -155,7 +155,7 @@
 
     <!-- ============ BOTTOM ACTION CLUSTER ============ -->
     <footer class="actionbar">
-      <span class="actionbar-note">Independent mockup — cork · stickies · yarn · local only</span>
+      <span class="actionbar-note">Edits stay in this browser · Share view-only = public board · Save = checkpoint</span>
       <div class="actions" role="group" aria-label="Board actions">
         <button class="btn act" type="button" data-action="report" aria-label="Report board">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3h7.6l-1.9 3 1.9 3H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M4.2 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -165,15 +165,19 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H8.4L4.6 14v-2.1H3a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.6" cy="7.7" r=".9" fill="currentColor"/><circle cx="8" cy="7.7" r=".9" fill="currentColor"/><circle cx="10.4" cy="7.7" r=".9" fill="currentColor"/></svg>
           <span>Open discussion <span class="count">(0 comments)</span></span>
         </button>
-        <button class="btn act" type="button" data-action="save" aria-label="Save board">
+        <button class="btn act" type="button" data-action="save" aria-label="Save board checkpoint" title="Download JSON and bookmark this board as your last save">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 3h7.2a1 1 0 0 1 1 1v9.2L8 10.8l-4.6 2.4V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           <span>Save board</span>
+        </button>
+        <button class="btn act" type="button" data-action="revert" aria-label="Revert to last save" title="Discard unsaved edits and restore the last Save board checkpoint (or the public board if you never saved)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 7.2A4.8 4.8 0 1 1 8 12.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.2 3.6v3.6H7.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Revert to last save</span>
         </button>
         <button class="btn act" type="button" data-action="export-png" aria-label="Export PNG">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 12.5 7.2 9.8l1.6 1.5L12 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Export PNG</span>
         </button>
-        <button class="btn act" type="button" data-action="share" aria-label="Copy view-only share URL" title="Copy a view-only URL for showing people">
+        <button class="btn act" type="button" data-action="share" aria-label="Copy view-only share URL" title="Copy a view-only URL for showing people — always the public board, not your local edits">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M5.6 5 8 2.6 10.4 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 8.5v3.6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <span>Share view-only</span>
         </button>
