@@ -713,6 +713,7 @@ if (typeof document !== 'undefined') {
     function remountNodes() {
       nodesG.textContent = '';
       nodeEls.clear();
+      visibleNodeIds = new Set();
       buildNodes();
       rebuildNodeIndex();
     }
@@ -740,12 +741,13 @@ if (typeof document !== 'undefined') {
       return freezeQuadPoint(p0x, p0y, p1x, p1y, t);
     }
 
-    function edgePathData(edges) {
+    function edgePathData(edges, rect) {
       // Straight segments — quadratic yarn sag is too expensive at ~700 edges.
       let d = '';
       for (const e of edges) {
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) continue;
+        if (rect && !segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
         d += `M${a.cx.toFixed(1)},${a.cy.toFixed(1)}L${b.cx.toFixed(1)},${b.cy.toFixed(1)}`;
       }
       return d;
@@ -755,13 +757,199 @@ if (typeof document !== 'undefined') {
       return EDGES.filter((e) => (e.tier || 'related') === tier);
     }
 
+    /* ---------- spatial index + viewport (keeps ~500 notes feeling light) ---------- */
+
+    const SPATIAL_CELL = 240;
+    const LOD_FAR_SCALE = 0.55; // below this: canvas paints screen-space names + yarn
+    let spatialBuckets = new Map();
+    let visibleNodeIds = new Set();
+    let lodCanvas = document.getElementById('lod-canvas');
+    let lodCtx = lodCanvas ? lodCanvas.getContext('2d', { alpha: true }) : null;
+    let lodCanvasCssW = 0;
+    let lodCanvasCssH = 0;
+    let frameRaf = 0;
+    let frameNeeds = { transform: false, cull: false, edges: false, labels: false, lodPaint: false };
+    let lastViewport = null;
+
+    function spatialKey(cx, cy) {
+      return ((Math.floor(cx / SPATIAL_CELL)) + ',' + Math.floor(cy / SPATIAL_CELL));
+    }
+
+    function rebuildSpatialIndex() {
+      const next = new Map();
+      for (const n of NODES) {
+        const key = spatialKey(n.cx, n.cy);
+        let bucket = next.get(key);
+        if (!bucket) {
+          bucket = [];
+          next.set(key, bucket);
+        }
+        bucket.push(n);
+      }
+      spatialBuckets = next;
+    }
+
+    function viewportWorldRect(padPx) {
+      const pad = (padPx == null ? 96 : padPx) / Math.max(view.scale, 0.01);
+      const cw = svg.clientWidth || 1;
+      const ch = svg.clientHeight || 1;
+      return {
+        minX: (-view.tx) / view.scale - pad,
+        minY: (-view.ty) / view.scale - pad,
+        maxX: (-view.tx + cw) / view.scale + pad,
+        maxY: (-view.ty + ch) / view.scale + pad,
+      };
+    }
+
+    function segmentHitsRect(x1, y1, x2, y2, rect) {
+      if (
+        (x1 >= rect.minX && x1 <= rect.maxX && y1 >= rect.minY && y1 <= rect.maxY) ||
+        (x2 >= rect.minX && x2 <= rect.maxX && y2 >= rect.minY && y2 <= rect.maxY)
+      ) {
+        return true;
+      }
+      const minX = x1 < x2 ? x1 : x2;
+      const maxX = x1 > x2 ? x1 : x2;
+      const minY = y1 < y2 ? y1 : y2;
+      const maxY = y1 > y2 ? y1 : y2;
+      return !(maxX < rect.minX || minX > rect.maxX || maxY < rect.minY || minY > rect.maxY);
+    }
+
+    function nodesTouchingRect(rect) {
+      const out = [];
+      const x0 = Math.floor(rect.minX / SPATIAL_CELL);
+      const y0 = Math.floor(rect.minY / SPATIAL_CELL);
+      const x1 = Math.floor(rect.maxX / SPATIAL_CELL);
+      const y1 = Math.floor(rect.maxY / SPATIAL_CELL);
+      for (let gx = x0; gx <= x1; gx++) {
+        for (let gy = y0; gy <= y1; gy++) {
+          const bucket = spatialBuckets.get(gx + ',' + gy);
+          if (!bucket) continue;
+          for (const n of bucket) {
+            if (n.x + n.w < rect.minX || n.x > rect.maxX || n.y + n.h < rect.minY || n.y > rect.maxY) continue;
+            out.push(n);
+          }
+        }
+      }
+      return out;
+    }
+
+    function isFarLod() {
+      return view.scale < LOD_FAR_SCALE;
+    }
+
+    function ensureLodCanvasSize() {
+      if (!lodCanvas || !lodCtx) return false;
+      const cssW = svg.clientWidth || 0;
+      const cssH = svg.clientHeight || 0;
+      if (!cssW || !cssH) return false;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const needW = Math.round(cssW * dpr);
+      const needH = Math.round(cssH * dpr);
+      if (lodCanvas.width !== needW || lodCanvas.height !== needH || lodCanvasCssW !== cssW || lodCanvasCssH !== cssH) {
+        lodCanvas.width = needW;
+        lodCanvas.height = needH;
+        lodCanvas.style.width = cssW + 'px';
+        lodCanvas.style.height = cssH + 'px';
+        lodCanvasCssW = cssW;
+        lodCanvasCssH = cssH;
+      }
+      lodCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return true;
+    }
+
+    function paintLodCanvas(rect) {
+      if (!ensureLodCanvasSize()) return;
+      const ctx = lodCtx;
+      const w = lodCanvasCssW;
+      const h = lodCanvasCssH;
+      ctx.clearRect(0, 0, w, h);
+
+      const s = view.scale;
+      const tx = view.tx;
+      const ty = view.ty;
+      const toScreenX = (x) => x * s + tx;
+      const toScreenY = (y) => y * s + ty;
+
+      // Culled yarn in one path — canvas strokes beat 700 SVG segments when zoomed out.
+      const dimmed = document.body.classList.contains('dim') && !ui.active;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      const tiers = [
+        { tier: 'related', stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
+        { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
+        { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
+      ];
+      for (const style of tiers) {
+        ctx.beginPath();
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = style.width;
+        let any = false;
+        for (const e of EDGES) {
+          if ((e.tier || 'related') !== style.tier) continue;
+          const a = byId.get(e.from), b = byId.get(e.to);
+          if (!a || !b) continue;
+          if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
+          ctx.moveTo(toScreenX(a.cx), toScreenY(a.cy));
+          ctx.lineTo(toScreenX(b.cx), toScreenY(b.cy));
+          any = true;
+        }
+        if (any) ctx.stroke();
+      }
+
+      // Screen-space names — fixed CSS pixels so they never disappear with zoom.
+      const visible = nodesTouchingRect(rect);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
+        || 'Georgia, "Times New Roman", serif';
+      ctx.font = '600 11px ' + fontFamily;
+      for (const n of visible) {
+        const sx = toScreenX(n.cx);
+        const sy = toScreenY(n.cy + (n.big ? 4 : 2));
+        if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
+        const label = n.name;
+        ctx.lineWidth = 3.2;
+        ctx.strokeStyle = 'rgba(247, 241, 225, 0.9)';
+        ctx.strokeText(label, sx, sy);
+        ctx.fillStyle = n.ink || '#2a1a0c';
+        ctx.fillText(label, sx, sy);
+        if (n.big && n.role) {
+          ctx.font = '500 9px ' + fontFamily;
+          ctx.strokeText(n.role, sx, sy + 12);
+          ctx.fillText(n.role, sx, sy + 12);
+          ctx.font = '600 11px ' + fontFamily;
+        }
+      }
+    }
+
+    function applyNodeCulling(rect) {
+      const nextVisible = new Set();
+      for (const n of nodesTouchingRect(rect)) nextVisible.add(n.id);
+      // Always keep selection / path / link endpoints mounted for chrome.
+      if (ui.selected) nextVisible.add(ui.selected);
+      if (ui.linkFrom) nextVisible.add(ui.linkFrom);
+      if (ui.path && ui.path.nodes) {
+        for (const n of ui.path.nodes) {
+          const id = freezeNodeId(n);
+          if (id) nextVisible.add(id);
+        }
+      }
+      for (const [id, g] of nodeEls) {
+        g.classList.toggle('is-culled', !nextVisible.has(id));
+      }
+      visibleNodeIds = nextVisible;
+    }
+
     function renderEdges() {
-      if (edgesCorePath) edgesCorePath.setAttribute('d', edgePathData(edgesByTier('core')));
-      if (edgesStrongPath) edgesStrongPath.setAttribute('d', edgePathData(edgesByTier('strong')));
-      edgesPath.setAttribute('d', edgePathData(edgesByTier('related')));
+      const rect = isFarLod() ? null : (lastViewport || viewportWorldRect());
+      // Near LOD: SVG yarn, viewport-culled. Far LOD: canvas owns the bulk web.
+      if (edgesCorePath) edgesCorePath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('core'), rect));
+      if (edgesStrongPath) edgesStrongPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('strong'), rect));
+      edgesPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('related'), rect));
       const activeId = ui.active;
       const active = activeId ? EDGES.filter((e) => e.from === activeId || e.to === activeId) : [];
-      activePath.setAttribute('d', edgePathData(active));
+      activePath.setAttribute('d', edgePathData(active, null));
       renderPathAccent();
     }
 
@@ -772,6 +960,7 @@ if (typeof document !== 'undefined') {
 
     function renderLabels() {
       labelsG.textContent = '';
+      if (isFarLod()) return; // canvas owns readable names when zoomed out
       // At board scale, only label the active star + Freese path — never all 700+ strings.
       const pathEdgeIds = new Set((ui.path && ui.path.edges ? ui.path.edges : []).map((e) => e.id).filter(Boolean));
       const activeId = ui.active;
@@ -804,6 +993,59 @@ if (typeof document !== 'undefined') {
 
     function applyLabelHighlights() {
       renderLabels();
+    }
+
+    function scheduleFrame(flags) {
+      if (flags) {
+        if (flags.transform) frameNeeds.transform = true;
+        if (flags.cull) frameNeeds.cull = true;
+        if (flags.edges) frameNeeds.edges = true;
+        if (flags.labels) frameNeeds.labels = true;
+        if (flags.lodPaint) frameNeeds.lodPaint = true;
+      }
+      if (frameRaf) return;
+      frameRaf = requestAnimationFrame(runFrame);
+    }
+
+    function flushFrame() {
+      if (frameRaf) {
+        cancelAnimationFrame(frameRaf);
+        frameRaf = 0;
+      }
+      frameNeeds = { transform: true, cull: true, edges: true, labels: true, lodPaint: true };
+      runFrame();
+    }
+
+    function runFrame() {
+      frameRaf = 0;
+      const needs = frameNeeds;
+      frameNeeds = { transform: false, cull: false, edges: false, labels: false, lodPaint: false };
+
+      if (needs.transform) {
+        world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
+        zoomPct.textContent = Math.round(view.scale * 100) + '%';
+        document.body.classList.toggle('lod-far', isFarLod());
+      }
+
+      const rect = viewportWorldRect();
+      lastViewport = rect;
+
+      if (needs.cull || needs.transform) applyNodeCulling(rect);
+      if (needs.edges || needs.transform) renderEdges();
+      if ((needs.labels || needs.transform) && drag.mode !== 'node') renderLabels();
+      if ((needs.lodPaint || needs.transform || needs.cull) && isFarLod()) {
+        paintLodCanvas(rect);
+      } else if (!isFarLod() && lodCtx && lodCanvasCssW) {
+        lodCtx.clearRect(0, 0, lodCanvasCssW, lodCanvasCssH);
+      }
+    }
+
+    function scheduleEdgeRedraw() {
+      scheduleFrame({ edges: true, labels: true, lodPaint: true, cull: true });
+    }
+
+    function applyTransform() {
+      scheduleFrame({ transform: true, cull: true, edges: true, labels: true, lodPaint: true });
     }
 
     function buildNodes() {
@@ -866,25 +1108,8 @@ if (typeof document !== 'undefined') {
         nodeEls.set(n.id, g);
       }
       nodesG.appendChild(frag);
-    }
-
-    /* ================= transforms ================= */
-
-    let edgeDrawRaf = 0;
-    function scheduleEdgeRedraw() {
-      if (edgeDrawRaf) return;
-      edgeDrawRaf = requestAnimationFrame(() => {
-        edgeDrawRaf = 0;
-        renderEdges();
-        // Skip labels while dragging — text churn is expensive.
-        if (drag.mode !== 'node') renderLabels();
-      });
-    }
-
-    function applyTransform() {
-      world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
-      zoomPct.textContent = Math.round(view.scale * 100) + '%';
-      document.body.classList.toggle('lod-far', view.scale < 0.42);
+      visibleNodeIds = new Set();
+      rebuildSpatialIndex();
     }
 
     function fitView(announce) {
@@ -918,7 +1143,6 @@ if (typeof document !== 'undefined') {
       view.scale = ns;
       clampPan();
       applyTransform();
-      renderLabels(); // labels track zoom so they stay readable
     }
 
     /* ================= hit testing ================= */
@@ -932,9 +1156,13 @@ if (typeof document !== 'undefined') {
     }
 
     function hitNode(px, py) {
-      const order = NODES.slice().sort((a, b) => NODE_DRAW_ORDER[a.type] - NODE_DRAW_ORDER[b.type]);
-      for (let i = order.length - 1; i >= 0; i--) {
-        const n = order[i];
+      // Probe spatial neighborhood only — O(cells) instead of scanning all 484 every move.
+      const pad = 4;
+      const rect = { minX: px - pad, minY: py - pad, maxX: px + pad, maxY: py + pad };
+      const candidates = nodesTouchingRect(rect);
+      candidates.sort((a, b) => (NODE_DRAW_ORDER[a.type] || 0) - (NODE_DRAW_ORDER[b.type] || 0));
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        const n = candidates[i];
         if (px >= n.x && px <= n.x + n.w && py >= n.y && py <= n.y + n.h) return n;
       }
       return null;
@@ -1203,7 +1431,9 @@ if (typeof document !== 'undefined') {
           if (ui.linkFrom) completeLink(drag.id);
           else selectNode(drag.id);
         } else {
+          rebuildSpatialIndex();
           persistBoard(false);
+          scheduleFrame({ cull: true, edges: true, lodPaint: true, labels: true });
         }
         drag.mode = null; drag.id = null;
         return;
@@ -1329,6 +1559,7 @@ if (typeof document !== 'undefined') {
       ui.dim = !ui.dim;
       document.body.classList.toggle('dim', ui.dim);
       document.getElementById('btn-dim').setAttribute('aria-checked', String(ui.dim));
+      scheduleFrame({ lodPaint: true });
       showToast(ui.dim ? 'Yarn dimmed.' : 'Yarn restored.');
     }
 
@@ -1571,6 +1802,12 @@ if (typeof document !== 'undefined') {
       const outW = Math.max(1, Math.round(bw * scale));
       const outH = Math.max(1, Math.round(bh * scale));
 
+      // Snapshot must be SVG-complete (uncull + full yarn) — far LOD uses canvas for live view only.
+      for (const [, g] of nodeEls) g.classList.remove('is-culled');
+      if (edgesCorePath) edgesCorePath.setAttribute('d', edgePathData(edgesByTier('core'), null));
+      if (edgesStrongPath) edgesStrongPath.setAttribute('d', edgePathData(edgesByTier('strong'), null));
+      edgesPath.setAttribute('d', edgePathData(edgesByTier('related'), null));
+
       const clone = svg.cloneNode(true);
       clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
       clone.setAttribute('width', String(outW));
@@ -1578,6 +1815,8 @@ if (typeof document !== 'undefined') {
       clone.setAttribute('viewBox', `${minX - pad} ${minY - pad} ${bw} ${bh}`);
       const worldEl = clone.querySelector('#world');
       if (worldEl) worldEl.removeAttribute('transform');
+      // Restore live LOD after cloning the hydrated SVG.
+      flushFrame();
 
       const serializer = new XMLSerializer();
       const svgText = serializer.serializeToString(clone);
@@ -1792,9 +2031,8 @@ if (typeof document !== 'undefined') {
     if (NODES.length <= 60) document.body.classList.add('settle-anim');
     buildNodes();
     rebuildNodeIndex();
-    renderEdges();
-    renderLabels();
     fitView();
+    flushFrame();
     updateReadout(null);
     showToast('Tip: tap Add note (or Edit board) to post. Panels hides the chrome.');
 

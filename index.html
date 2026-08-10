@@ -49,6 +49,8 @@
 
   <!-- ============ BOARD SURFACE ============ -->
   <main class="board" id="board">
+    <!-- Screen-space LOD layer: yarn + readable names when zoomed out (SVG text would vanish or thrash). -->
+    <canvas id="lod-canvas" class="lod-canvas" aria-hidden="true"></canvas>
     <svg id="graph" tabindex="0" role="img"
          aria-label="Freese Index board. A cork investigation wall with sticky-note subjects and red yarn strings. Josh Freese sits at the center, connected to bands, artists, and projects: Foo Fighters, A Perfect Circle, Nine Inch Nails, Devo, The Vandals, Guns N' Roses, Weezer, Suicidal Tendencies, Sting, and others. Pan with drag or arrow keys, zoom with the controls or the mouse wheel. Use the hidden node list after the board to focus each subject.">
       <defs>

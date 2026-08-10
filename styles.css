@@ -424,6 +424,7 @@ body.linking #graph { cursor: crosshair; }
   inset: 0;
   width: 100%;
   height: 100%;
+  z-index: 1;
   touch-action: none;
   cursor: grab;
   user-select: none;
@@ -483,16 +484,40 @@ body.has-active .strings-tier-related { opacity: 0.18; }
 body.has-active .strings-tier-strong { opacity: 0.24; }
 body.has-active .strings-tier-core { opacity: 0.3; }
 
-/* Far zoom LOD — hide note chrome so pan/zoom stays smooth */
+/* Far zoom: SVG drops text + bulk yarn; canvas paints screen-space names + culled yarn. */
+.lod-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+body.lod-far .lod-canvas { opacity: 1; }
 body.lod-far .node .lbl,
 body.lod-far .node .sub,
 body.lod-far .node .pin,
 body.lod-far .edge-label {
   display: none;
 }
-body.lod-far .strings {
-  opacity: 0.5;
-  stroke-width: 1.1;
+body.lod-far .strings-tier-related,
+body.lod-far .strings-tier-strong,
+body.lod-far .strings-tier-core {
+  opacity: 0;
+}
+body.lod-far .strings-active,
+body.lod-far .strings-path {
+  opacity: 0.95;
+}
+body.lod-far:not(.has-active) .strings-active,
+body.lod-far:not(.has-active) .strings-path {
+  opacity: 0;
+}
+/* Off-viewport notes stay mounted but skipped by the compositor */
+.node.is-culled {
+  display: none;
 }
 
 .edge-label {
