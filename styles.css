@@ -539,6 +539,10 @@ body.lod-far:not(.has-active) .strings-active,
 body.lod-far:not(.has-active) .strings-path {
   opacity: 0;
 }
+/* Cosmos: stickies become a constellation — canvas owns dots + hub names. */
+body.lod-cosmos .node {
+  visibility: hidden;
+}
 /* Off-viewport notes stay mounted but skipped by the compositor */
 .node.is-culled {
   display: none;

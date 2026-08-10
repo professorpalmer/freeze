@@ -7,9 +7,10 @@
    · Graph is rendered into a SINGLE inline <svg>. Edges are batched into
      tiered <path> elements (base + active + path accent), labels share one
      <g>, and each node is one <g>.
-   · Pan (drag / arrows), zoom (wheel / buttons / pinch), fit-to-view,
-     dim-strings toggle, node dragging when interactivity is on, hover and
-     selection treatment, and a detail/status readout.
+   · Pan (drag / arrows), deep zoom (wheel / buttons / pinch) down to a
+     constellation / map-globe view, fit-to-view, dim-strings toggle, node
+     dragging when interactivity is on, hover and selection treatment, and a
+     detail/status readout. Cork grows as you explore so the board feels endless.
    ========================================================================== */
 
 'use strict';
@@ -458,6 +459,11 @@ function freezeLocalShareUrl(selectedId, opts) {
 
 /** Empty cork around the note cluster — room to pin without hitting the edge. */
 const OPEN_BOARD_MARGIN = 16000;
+/** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
+const ZOOM_MIN = 0.0008;
+const ZOOM_MAX = 8;
+const LOD_FAR_SCALE = 0.55;   // canvas names + yarn
+const LOD_COSMOS_SCALE = 0.085; // constellation dots; whole board fits in view
 
 /** Grow cork so content has open margin on every side (room to pin more notes). */
 function freezeEnsureOpenBoardMargin(nodes, world, marginPx) {
@@ -856,7 +862,6 @@ if (typeof document !== 'undefined') {
     /* ---------- spatial index + viewport (keeps ~500 notes feeling light) ---------- */
 
     const SPATIAL_CELL = 240;
-    const LOD_FAR_SCALE = 0.55; // below this: canvas paints screen-space names + yarn
     let spatialBuckets = new Map();
     let visibleNodeIds = new Set();
     let lodCanvas = document.getElementById('lod-canvas');
@@ -886,7 +891,7 @@ if (typeof document !== 'undefined') {
     }
 
     function viewportWorldRect(padPx) {
-      const pad = (padPx == null ? 96 : padPx) / Math.max(view.scale, 0.01);
+      const pad = (padPx == null ? 96 : padPx) / Math.max(view.scale, ZOOM_MIN);
       const cw = svg.clientWidth || 1;
       const ch = svg.clientHeight || 1;
       return {
@@ -934,6 +939,18 @@ if (typeof document !== 'undefined') {
       return view.scale < LOD_FAR_SCALE;
     }
 
+    function isCosmosLod() {
+      return view.scale < LOD_COSMOS_SCALE;
+    }
+
+    function formatZoomLabel(scale) {
+      const pct = scale * 100;
+      if (pct >= 10) return Math.round(pct) + '%';
+      if (pct >= 1) return pct.toFixed(1).replace(/\.0$/, '') + '%';
+      if (pct >= 0.1) return pct.toFixed(2) + '%';
+      return pct.toFixed(3) + '%';
+    }
+
     function ensureLodCanvasSize() {
       if (!lodCanvas || !lodCtx) return false;
       const cssW = svg.clientWidth || 0;
@@ -967,15 +984,21 @@ if (typeof document !== 'undefined') {
       const toScreenX = (x) => x * s + tx;
       const toScreenY = (y) => y * s + ty;
 
-      // Culled yarn in one path — canvas strokes beat 700 SVG segments when zoomed out.
+      const cosmos = isCosmosLod();
       const dimmed = document.body.classList.contains('dim') && !ui.active;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      const tiers = [
-        { tier: 'related', stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
-        { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
-        { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
-      ];
+      // Far: full yarn. Cosmos: only stronger threads so the constellation stays readable.
+      const tiers = cosmos
+        ? [
+            { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.08)' : 'rgba(198, 40, 40, 0.28)', width: 0.9 },
+            { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.42)', width: 1.15 },
+          ]
+        : [
+            { tier: 'related', stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
+            { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
+            { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
+          ];
       for (const style of tiers) {
         ctx.beginPath();
         ctx.strokeStyle = style.stroke;
@@ -993,8 +1016,39 @@ if (typeof document !== 'undefined') {
         if (any) ctx.stroke();
       }
 
-      // Screen-space names — fixed CSS pixels so they never disappear with zoom.
       const visible = nodesTouchingRect(rect);
+      if (cosmos) {
+        // Constellation view — colored pins as stars; name only the hubs.
+        for (const n of visible) {
+          const sx = toScreenX(n.cx);
+          const sy = toScreenY(n.cy);
+          if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
+          const r = n.big ? 3.4 : (s > 0.04 ? 2.1 : 1.35);
+          ctx.beginPath();
+          ctx.fillStyle = n.pin || n.color || '#c62828';
+          ctx.arc(sx, sy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
+          || 'Georgia, "Times New Roman", serif';
+        ctx.font = '600 11px ' + fontFamily;
+        for (const n of visible) {
+          if (!n.big) continue;
+          const sx = toScreenX(n.cx);
+          const sy = toScreenY(n.cy) + 5;
+          if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
+          ctx.strokeText(n.name, sx, sy);
+          ctx.fillStyle = n.ink || '#2a1a0c';
+          ctx.fillText(n.name, sx, sy);
+        }
+        return;
+      }
+
+      // Screen-space names — fixed CSS pixels so they never disappear with zoom.
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
@@ -1119,8 +1173,9 @@ if (typeof document !== 'undefined') {
 
       if (needs.transform) {
         world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
-        zoomPct.textContent = Math.round(view.scale * 100) + '%';
+        zoomPct.textContent = formatZoomLabel(view.scale);
         document.body.classList.toggle('lod-far', isFarLod());
+        document.body.classList.toggle('lod-cosmos', isCosmosLod());
       }
 
       const rect = viewportWorldRect();
@@ -1218,22 +1273,65 @@ if (typeof document !== 'undefined') {
       const pad = Math.min(2800, Math.max(900, Math.round(OPEN_BOARD_MARGIN * 0.15)));
       const bw = maxX - minX + pad * 2, bh = maxY - minY + pad * 2;
       const cw = svg.clientWidth, ch = svg.clientHeight;
-      view.scale = clamp(Math.min(cw / bw, ch / bh), 0.02, 1.6);
+      view.scale = clamp(Math.min(cw / bw, ch / bh), ZOOM_MIN, 1.6);
       view.tx = (cw - bw * view.scale) / 2 - (minX - pad) * view.scale;
       view.ty = (ch - bh * view.scale) / 2 - (minY - pad) * view.scale;
       applyTransform();
-      if (announce) showToast('Fitted with open cork — pan out to pin more.');
+      if (announce) showToast('Fitted — keep zooming out for the full cork cosmos.');
+    }
+
+    /** Grow cork when the camera approaches the edge so the board feels endless. */
+    function growCosmosForViewport() {
+      const edgePad = Math.max(5000, Math.round(OPEN_BOARD_MARGIN * 0.4));
+      const rect = viewportWorldRect(0);
+      let nextW = WORLD.w;
+      let nextH = WORLD.h;
+      let shiftX = 0;
+      let shiftY = 0;
+      if (rect.minX < edgePad) shiftX = Math.ceil(edgePad - rect.minX);
+      if (rect.minY < edgePad) shiftY = Math.ceil(edgePad - rect.minY);
+      if (rect.maxX > WORLD.w - edgePad) nextW = Math.ceil(rect.maxX + edgePad);
+      if (rect.maxY > WORLD.h - edgePad) nextH = Math.ceil(rect.maxY + edgePad);
+      if (!shiftX && !shiftY && nextW === WORLD.w && nextH === WORLD.h) return false;
+
+      if (shiftX || shiftY) {
+        for (const n of NODES) {
+          n.x += shiftX;
+          n.y += shiftY;
+          if (Number.isFinite(n.cx)) n.cx += shiftX;
+          if (Number.isFinite(n.cy)) n.cy += shiftY;
+        }
+        nextW += shiftX;
+        nextH += shiftY;
+        view.tx -= shiftX * view.scale;
+        view.ty -= shiftY * view.scale;
+      }
+      applyWorldSize({ w: nextW, h: nextH });
+      if (shiftX || shiftY) {
+        byId = finalizeNodes();
+        graphModel = freezeGraphModel(NODES, EDGES);
+        for (const n of NODES) {
+          const g = nodeEls.get(n.id);
+          if (!g) continue;
+          g.setAttribute('transform', `translate(${n.x},${n.y})`);
+        }
+        rebuildSpatialIndex();
+      }
+      persistBoard(false);
+      return true;
     }
 
     function clampPan() {
-      const slack = 0.35;
+      growCosmosForViewport();
+      // Loose slack — cork keeps expanding, so pan feels like a globe not a boxed map.
+      const slack = 0.55;
       const cw = svg.clientWidth, ch = svg.clientHeight;
       view.tx = clamp(view.tx, cw - WORLD.w * view.scale - cw * slack, cw * slack);
       view.ty = clamp(view.ty, ch - WORLD.h * view.scale - ch * slack, ch * slack);
     }
 
     function zoomAt(cx, cy, factor) {
-      const ns = clamp(view.scale * factor, 0.02, 4);
+      const ns = clamp(view.scale * factor, ZOOM_MIN, ZOOM_MAX);
       const k = ns / view.scale;
       view.tx = cx - (cx - view.tx) * k;
       view.ty = cy - (cy - view.ty) * k;
@@ -1355,7 +1453,7 @@ if (typeof document !== 'undefined') {
           `<span><i style="background:${TYPES.blue.color}"></i>Blue</span>` +
           `<span><i style="background:${TYPES.green.color}"></i>Green</span>` +
           '</div>' +
-          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom \u00b7 click a note for details \u00b7 <kbd>E</kbd> edit \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> drag notes \u00b7 <kbd>Esc</kbd> clear</p>';
+          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> drag notes \u00b7 <kbd>Esc</kbd> clear</p>';
         return;
       }
       const n = byId.get(id);
@@ -1566,7 +1664,7 @@ if (typeof document !== 'undefined') {
     svg.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = svg.getBoundingClientRect();
-      zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0016));
+      zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0022));
       view.fitted = true;
     }, { passive: false });
 
