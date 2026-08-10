@@ -45,6 +45,20 @@
         <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
         <span class="toggle-label">Dim yarn</span>
       </button>
+      <button id="btn-hop-color" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Color stickies by hops from Josh">
+        <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
+        <span class="toggle-label">Color by hops</span>
+      </button>
+      <button id="btn-layout" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle Trad view vs Auto sort" title="Trad view keeps saved positions. Auto sort is display-only rings from Josh.">
+        <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
+        <span class="toggle-label" id="layout-label">Trad view</span>
+      </button>
+      <button id="btn-suggest" class="btn btn-suggest view-only-show" type="button" hidden title="Suggest a change for the editor">
+        <span>Suggest change</span>
+      </button>
+      <button id="btn-suggestions" class="btn editor-only" type="button" hidden title="Review suggested changes">
+        <span>Suggestions</span>
+      </button>
     </div>
   </header>
 
@@ -109,12 +123,66 @@
       <button id="btn-add-note" class="ctl editor-only" type="button" aria-label="Add sticky note" title="Add note" hidden>
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2.5" width="10" height="11" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
-      <button id="btn-reorganize" class="ctl editor-only" type="button" aria-label="Reorganize board" title="Reorganize around Josh" hidden>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="5.5" cy="4.5" r="1.2" fill="currentColor"/><circle cx="10.5" cy="8" r="1.2" fill="currentColor"/><circle cx="7" cy="11.5" r="1.2" fill="currentColor"/></svg>
-      </button>
-      <button id="btn-export-png" class="ctl" type="button" aria-label="Export board as PNG" title="Export PNG">
+      <button id="btn-export-png" class="ctl" type="button" aria-label="Export viewport as PNG" title="Export what is on screen as PNG">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 12.5 7.2 9.8l1.6 1.5L12 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
+      <button id="btn-reorganize" class="ctl editor-only ctl-danger" type="button" aria-label="Mutate board layout around Josh" title="WARNING: permanently moves saved note positions. Prefer Auto sort for a display-only ring layout." hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="5.5" cy="4.5" r="1.2" fill="currentColor"/><circle cx="10.5" cy="8" r="1.2" fill="currentColor"/><circle cx="7" cy="11.5" r="1.2" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <!-- Edit pathway (edge) label -->
+    <div class="modal" id="edge-modal" hidden>
+      <form class="modal-card" id="edge-form" autocomplete="off">
+        <h2 class="modal-title">Edit pathway label</h2>
+        <p class="modal-hint" id="edge-modal-hint">Yarn between two notes.</p>
+        <label class="modal-field">Label
+          <input id="edge-label" name="label" type="text" required maxlength="160" placeholder="connected to">
+        </label>
+        <label class="modal-field">Evidence <span class="field-optional">(optional)</span>
+          <textarea id="edge-evidence" name="evidence" rows="2" maxlength="600" placeholder="Citation or note"></textarea>
+        </label>
+        <div class="modal-actions modal-actions-end">
+          <button type="button" class="btn btn-ghost" id="edge-cancel">Cancel</button>
+          <button type="submit" class="btn" id="edge-save">Save label</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Suggest a change (view mode) -->
+    <div class="modal" id="suggest-modal" hidden>
+      <form class="modal-card" id="suggest-form" autocomplete="off">
+        <h2 class="modal-title">Suggest a change</h2>
+        <p class="modal-hint" id="suggest-attach-hint">Attaches the selected note (and yarn if any).</p>
+        <label class="modal-field">Your suggestion
+          <textarea id="suggest-text" name="text" rows="4" required maxlength="2000" placeholder="What should change on the Freese Index?"></textarea>
+        </label>
+        <div class="modal-actions modal-actions-split">
+          <button type="button" class="btn btn-ghost" id="suggest-copy">Copy for Discord</button>
+          <div class="modal-actions-end">
+            <button type="button" class="btn btn-ghost" id="suggest-cancel">Cancel</button>
+            <button type="submit" class="btn" id="suggest-save">Save suggestion</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <!-- Suggestions inbox (edit mode) -->
+    <div class="modal" id="suggestions-modal" hidden>
+      <div class="modal-card modal-card-wide">
+        <h2 class="modal-title">Suggestions inbox</h2>
+        <p class="modal-hint">Local suggestions on this device. Paste JSON from Discord or a friend to import.</p>
+        <label class="modal-field">Paste / import JSON
+          <textarea id="suggestions-import" rows="3" maxlength="8000" placeholder='{"text":"…","nodeId":"…"} or an array'></textarea>
+        </label>
+        <div class="modal-actions modal-actions-end" style="margin-bottom:10px">
+          <button type="button" class="btn btn-ghost" id="suggestions-import-btn">Import</button>
+        </div>
+        <ul id="suggestions-list" class="suggestions-list" aria-label="Saved suggestions"></ul>
+        <div class="modal-actions modal-actions-end">
+          <button type="button" class="btn" id="suggestions-close">Close</button>
+        </div>
+      </div>
     </div>
 
     <!-- Add / edit note modal -->
@@ -167,7 +235,7 @@
 
     <!-- ============ BOTTOM ACTION CLUSTER ============ -->
     <footer class="actionbar">
-      <span class="actionbar-note">Edits stay in this browser · Share view-only = public board · Save = checkpoint</span>
+      <span class="actionbar-note">Edits stay in this browser · Share view-only = public board · Save = checkpoint only (not published)</span>
       <div class="actions" role="group" aria-label="Board actions">
         <button class="btn act" type="button" data-action="report" aria-label="Report board">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3h7.6l-1.9 3 1.9 3H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M4.2 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -177,7 +245,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H8.4L4.6 14v-2.1H3a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.6" cy="7.7" r=".9" fill="currentColor"/><circle cx="8" cy="7.7" r=".9" fill="currentColor"/><circle cx="10.4" cy="7.7" r=".9" fill="currentColor"/></svg>
           <span>Open discussion <span class="count">(0 comments)</span></span>
         </button>
-        <button class="btn act" type="button" data-action="save" aria-label="Save board checkpoint" title="Download JSON and bookmark this board as your last save">
+        <button class="btn act" type="button" data-action="save" aria-label="Save board checkpoint" title="Bookmark this board as a checkpoint on this device — does not publish or download">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 3h7.2a1 1 0 0 1 1 1v9.2L8 10.8l-4.6 2.4V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           <span>Save board</span>
         </button>
@@ -185,7 +253,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 7.2A4.8 4.8 0 1 1 8 12.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.2 3.6v3.6H7.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Revert to last save</span>
         </button>
-        <button class="btn act" type="button" data-action="export-png" aria-label="Export PNG">
+        <button class="btn act" type="button" data-action="export-png" aria-label="Export viewport PNG" title="Rasterize what is on screen">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 12.5 7.2 9.8l1.6 1.5L12 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Export PNG</span>
         </button>
@@ -193,7 +261,7 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M5.6 5 8 2.6 10.4 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 8.5v3.6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <span>Share view-only</span>
         </button>
-        <button class="btn act" type="button" data-action="copy" aria-label="Copy to My Boards">
+        <button class="btn act" type="button" data-action="copy" aria-label="Copy board JSON" title="Copy board JSON. Hold Shift to also download a .json file.">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5V4a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <span>Copy JSON</span>
         </button>

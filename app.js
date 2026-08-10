@@ -402,10 +402,70 @@ function freezeBoardSnapshot(model, selected, path, camera) {
 const FREESE_STORAGE_KEY = 'freese-index-board-v1';
 const FREESE_CHECKPOINT_KEY = 'freese-index-board-checkpoint-v1';
 const FREESE_CAMERA_KEY = 'freese-index-camera-v1';
+const FREESE_HOP_COLOR_KEY = 'freese-index-hop-color-v1';
+const FREESE_SUGGESTIONS_KEY = 'freese-index-suggestions-v1';
 
-/** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
-const ZOOM_MIN = 0.0008;
+/** Floor deep zoom so the cork cosmos stays stable (higher on phones). */
+const ZOOM_MIN_DESKTOP = 0.02;
+const ZOOM_MIN_MOBILE = 0.04;
+let ZOOM_MIN = ZOOM_MIN_DESKTOP;
 const ZOOM_MAX = 8;
+
+const HOP_COLOR_PALETTE = [
+  '#ffe0e6', // 0 — Josh
+  '#fff3a8', // 1
+  '#c5e4f7', // 2
+  '#d8f0c8', // 3
+  '#f5d0a8', // 4
+  '#e8d4f0', // 5
+  '#f0e4c8', // 6+
+];
+
+function freezeHopPaper(hops) {
+  const h = Number.isFinite(hops) ? Math.max(0, Math.floor(hops)) : 99;
+  if (h >= HOP_COLOR_PALETTE.length) return HOP_COLOR_PALETTE[HOP_COLOR_PALETTE.length - 1];
+  return HOP_COLOR_PALETTE[h];
+}
+
+function freezeReadHopColorPref(defaultOn) {
+  if (typeof localStorage === 'undefined') return !!defaultOn;
+  try {
+    const raw = localStorage.getItem(FREESE_HOP_COLOR_KEY);
+    if (raw == null) return !!defaultOn;
+    return raw === '1' || raw === 'true';
+  } catch (_) {
+    return !!defaultOn;
+  }
+}
+
+function freezeWriteHopColorPref(on) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(FREESE_HOP_COLOR_KEY, on ? '1' : '0');
+  } catch (_) { /* ignore */ }
+}
+
+function freezeReadSuggestions() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(FREESE_SUGGESTIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s) => s && typeof s === 'object') : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function freezeWriteSuggestions(list) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(FREESE_SUGGESTIONS_KEY, JSON.stringify(Array.isArray(list) ? list : []));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 function freezeNormalizeCamera(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -859,18 +919,26 @@ if (typeof document !== 'undefined') {
       interactive: false,
       editing: false,
       viewOnly: !!SHARE_FLAGS.viewOnly,
+      shared: !!SHARE_FLAGS.shared,
       chromeVisible: true,
+      hopColor: false, // set after SHARE_FLAGS below
+      layoutMode: 'trad', // 'trad' | 'auto' (auto is display-only)
       selected: null,
       hovered: null,
       active: null,
       path: null,
       linkFrom: null,
+      suggestEdgeId: null,
     };
+    ui.hopColor = freezeReadHopColorPref(!!ui.viewOnly);
     const drag = { mode: null, id: null, sx: 0, sy: 0, nx: 0, ny: 0, moved: false };
     const pointers = new Map(); // pointerId -> {x,y}
     let pinch = null;           // {dist, mx, my}
     let persistTimer = null;
     let cameraTimer = null;
+    let tradLayoutSnapshot = null; // when Auto sort is on, traditional x/y live here
+    let hopDistCache = null; // Map<nodeId, hops>
+    let editingEdgeId = null;
 
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const NODE_DRAW_ORDER = { subject: 0, project: 1, band: 2, person: 3, pink: 4, yellow: 5, green: 6, blue: 7 };
@@ -891,7 +959,99 @@ if (typeof document !== 'undefined') {
       return { tx: view.tx, ty: view.ty, scale: view.scale };
     }
 
+    function captureTradPositions() {
+      return NODES.map((n) => ({ id: n.id, x: n.x, y: n.y }));
+    }
+
+    function applyPositionList(list) {
+      if (!list || !list.length) return;
+      const byPos = new Map(list.map((p) => [p.id, p]));
+      for (const n of NODES) {
+        const p = byPos.get(n.id);
+        if (!p) continue;
+        n.x = p.x;
+        n.y = p.y;
+        n.cx = n.x + n.w / 2;
+        n.cy = n.y + n.h / 2;
+      }
+    }
+
+    function positionsForPersist() {
+      if (ui.layoutMode === 'auto' && tradLayoutSnapshot) {
+        const byPos = new Map(tradLayoutSnapshot.map((p) => [p.id, p]));
+        return NODES.map((n) => {
+          const p = byPos.get(n.id);
+          return p
+            ? { ...n, x: p.x, y: p.y, cx: p.x + n.w / 2, cy: p.y + n.h / 2 }
+            : n;
+        });
+      }
+      return NODES;
+    }
+
+    function rebuildHopDistances() {
+      const joshId = freezeJoshId();
+      const dist = new Map();
+      if (!graphModel || !graphModel.adjacency) {
+        hopDistCache = dist;
+        return dist;
+      }
+      const queue = [];
+      if (byId.has(joshId)) {
+        dist.set(joshId, 0);
+        queue.push(joshId);
+      }
+      while (queue.length) {
+        const cur = queue.shift();
+        const d = dist.get(cur);
+        for (const { id: other } of (graphModel.adjacency.get(cur) || [])) {
+          if (dist.has(other)) continue;
+          dist.set(other, d + 1);
+          queue.push(other);
+        }
+      }
+      hopDistCache = dist;
+      return dist;
+    }
+
+    function hopDistanceFor(id) {
+      if (!hopDistCache) rebuildHopDistances();
+      return hopDistCache.has(id) ? hopDistCache.get(id) : 99;
+    }
+
+    function paperForNode(n) {
+      if (ui.hopColor) return freezeHopPaper(hopDistanceFor(n.id));
+      return n.paper || n.color || '#f7f1e1';
+    }
+
+    function applyHopColorsToDom() {
+      document.body.classList.toggle('hop-color', !!ui.hopColor);
+      for (const n of NODES) {
+        const g = nodeEls.get(n.id);
+        if (!g) continue;
+        const hops = hopDistanceFor(n.id);
+        g.setAttribute('data-hop', String(hops > 20 ? 20 : hops));
+        const chip = g.querySelector('.chip');
+        if (chip) chip.setAttribute('fill', paperForNode(n));
+      }
+      scheduleFrame({ lodPaint: true });
+    }
+
+    function pathEdgeIdSet() {
+      return new Set((ui.path && ui.path.edges ? ui.path.edges : []).map((e) => e.id).filter(Boolean));
+    }
+
+    function incidentEdgeIdSet(nodeId) {
+      const set = new Set();
+      if (!nodeId) return set;
+      for (const e of EDGES) {
+        if (e.from === nodeId || e.to === nodeId) set.add(e.id);
+      }
+      return set;
+    }
+
     function persistCamera(immediate) {
+      if (ui.viewOnly || ui.shared) return;
       const write = () => freezeWriteCamera(cameraSnapshot());
       if (immediate) {
         clearTimeout(cameraTimer);
@@ -905,14 +1065,18 @@ if (typeof document !== 'undefined') {
     function persistBoard(immediate) {
       if (ui.viewOnly) return;
       const write = () => {
+        const nodesForSnap = positionsForPersist();
+        const modelForSnap = nodesForSnap === NODES
+          ? graphModel
+          : freezeGraphModel(nodesForSnap, EDGES);
         const snap = freezeBoardSnapshot(
-          graphModel,
+          modelForSnap,
           ui.selected ? byId.get(ui.selected) : null,
           ui.path,
           cameraSnapshot()
         );
         freezeWriteLocalBoard(snap);
-        freezeWriteCamera(cameraSnapshot());
+        if (!(ui.viewOnly || ui.shared)) freezeWriteCamera(cameraSnapshot());
       };
       if (immediate) {
         clearTimeout(persistTimer);
@@ -949,6 +1113,7 @@ if (typeof document !== 'undefined') {
       byId = finalizeNodes();
       graphModel = freezeGraphModel(NODES, EDGES);
       rebuildEdgeTier();
+      rebuildHopDistances();
     }
 
     function remountNodes() {
@@ -982,10 +1147,11 @@ if (typeof document !== 'undefined') {
       return freezeQuadPoint(p0x, p0y, p1x, p1y, t);
     }
 
-    function edgePathData(edges, rect) {
+    function edgePathData(edges, rect, skipIds) {
       // Straight segments — quadratic yarn sag is too expensive at ~700 edges.
       let d = '';
       for (const e of edges) {
+        if (skipIds && skipIds.has(e.id)) continue;
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) continue;
         if (rect && !segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
@@ -1014,6 +1180,7 @@ if (typeof document !== 'undefined') {
       window.matchMedia('(max-width: 720px)').matches ||
       window.matchMedia('(pointer: coarse)').matches
     ));
+    ZOOM_MIN = MOBILE_LIGHT ? ZOOM_MIN_MOBILE : ZOOM_MIN_DESKTOP;
     // Ladder: near (SVG) → compact mini-notes → atlas labels → cosmos dots.
     const FAR_SCALE = MOBILE_LIGHT ? LOD_MOBILE_SVG_HIDE : LOD_FAR_SCALE;
     const COMPACT_FLOOR = MOBILE_LIGHT ? LOD_MOBILE_COMPACT_FLOOR : 0.30;
@@ -1163,8 +1330,29 @@ if (typeof document !== 'undefined') {
       const paintYarn = !cosmos || s >= 0.025;
       if (!paintYarn) return;
       const paintRelated = !MOBILE_LIGHT && !cosmos;
+      const pathIds = pathEdgeIdSet();
+      const incidentIds = incidentEdgeIdSet(ui.active || ui.selected);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+
+      const strokeEdgeList = (list, stroke, width, skip) => {
+        ctx.beginPath();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = width;
+        let any = false;
+        for (const e of list) {
+          if (skip && skip.has(e.id)) continue;
+          const a = byId.get(e.from), b = byId.get(e.to);
+          if (!a || !b) continue;
+          if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
+          ctx.moveTo(a.cx * s + tx, a.cy * s + ty);
+          ctx.lineTo(b.cx * s + tx, b.cy * s + ty);
+          any = true;
+        }
+        if (any) ctx.stroke();
+      };
+
+      const skipHighlight = new Set([...pathIds, ...incidentIds]);
       const tiers = cosmos
         ? [
             { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.36)', width: 1.9 },
@@ -1178,19 +1366,27 @@ if (typeof document !== 'undefined') {
             { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.7)', width: 2.45 },
           ];
       for (const style of tiers) {
-        ctx.beginPath();
-        ctx.strokeStyle = style.stroke;
-        ctx.lineWidth = style.width;
-        let any = false;
-        for (const e of style.list) {
-          const a = byId.get(e.from), b = byId.get(e.to);
-          if (!a || !b) continue;
-          if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
-          ctx.moveTo(a.cx * s + tx, a.cy * s + ty);
-          ctx.lineTo(b.cx * s + tx, b.cy * s + ty);
-          any = true;
-        }
-        if (any) ctx.stroke();
+        strokeEdgeList(style.list, style.stroke, style.width, skipHighlight);
+      }
+
+      // Selected / active incident yarn — blue; path to Josh — green (on top).
+      if (incidentIds.size) {
+        const incident = EDGES.filter((e) => incidentIds.has(e.id) && !pathIds.has(e.id));
+        strokeEdgeList(
+          incident,
+          dimmed ? 'rgba(30, 106, 176, 0.35)' : 'rgba(30, 106, 176, 0.92)',
+          cosmos ? 2.3 : 2.7,
+          null
+        );
+      }
+      if (pathIds.size) {
+        const pathEdges = EDGES.filter((e) => pathIds.has(e.id));
+        strokeEdgeList(
+          pathEdges,
+          dimmed ? 'rgba(46, 125, 58, 0.4)' : 'rgba(46, 125, 58, 0.95)',
+          cosmos ? 2.5 : 2.9,
+          null
+        );
       }
     }
 
@@ -1337,7 +1533,7 @@ if (typeof document !== 'undefined') {
         const hh = noteH / 2;
         const x0 = sx - hw;
         const y0 = sy - hh;
-        const paper = n.paper || n.color || '#f7f1e1';
+        const paper = paperForNode(n);
         const ink = n.ink || '#2a1a0c';
         const pin = n.pin || '#c62828';
 
@@ -1438,12 +1634,18 @@ if (typeof document !== 'undefined') {
 
     function renderEdges() {
       const rect = isFarLod() ? null : (lastViewport || viewportWorldRect());
+      const pathIds = pathEdgeIdSet();
+      const activeId = ui.active || ui.selected;
+      const incidentIds = incidentEdgeIdSet(activeId);
+      const skipBulk = new Set([...pathIds, ...incidentIds]);
       // Near LOD: SVG yarn, viewport-culled. Far LOD: canvas owns the bulk web.
-      if (edgesCorePath) edgesCorePath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('core'), rect));
-      if (edgesStrongPath) edgesStrongPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('strong'), rect));
-      edgesPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('related'), rect));
-      const activeId = ui.active;
-      const active = activeId ? EDGES.filter((e) => e.from === activeId || e.to === activeId) : [];
+      // Bulk = red; selected incident = blue; path to Josh = green.
+      if (edgesCorePath) edgesCorePath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('core'), rect, skipBulk));
+      if (edgesStrongPath) edgesStrongPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('strong'), rect, skipBulk));
+      edgesPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('related'), rect, skipBulk));
+      const active = activeId
+        ? EDGES.filter((e) => incidentIds.has(e.id) && !pathIds.has(e.id))
+        : [];
       activePath.setAttribute('d', edgePathData(active, null));
       renderPathAccent();
     }
@@ -1593,7 +1795,8 @@ if (typeof document !== 'undefined') {
         chip.setAttribute('width', n.w);
         chip.setAttribute('height', n.h);
         chip.setAttribute('rx', 2);
-        chip.setAttribute('fill', n.paper);
+        chip.setAttribute('fill', paperForNode(n));
+        g.setAttribute('data-hop', String(Math.min(20, hopDistanceFor(n.id))));
 
         const pin = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         pin.setAttribute('class', 'pin');
@@ -1823,7 +2026,7 @@ if (typeof document !== 'undefined') {
         const other = byId.get(e.from === id ? e.to : e.from);
         const meta = `${e.label} · ${e.tier}/${e.strength}`;
         const evidence = e.evidence ? ` — ${e.evidence}` : '';
-        return { other, text: `${other.name} — ${meta}${evidence}` };
+        return { edge: e, other, text: `${other.name} — ${meta}${evidence}` };
       }).sort((a, b) => a.other.name.localeCompare(b.other.name));
     }
 
@@ -1846,6 +2049,9 @@ if (typeof document !== 'undefined') {
           `<span><i style="background:${TYPES.blue.color}"></i>Blue</span>` +
           `<span><i style="background:${TYPES.green.color}"></i>Green</span>` +
           '</div>' +
+          (ui.hopColor
+            ? '<p class="ro-hint">Hop colors overlay note paper by distance from Josh Freese.</p>'
+            : '') +
           '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit (move / add / yarn) \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>Esc</kbd> clear</p>';
         return;
       }
@@ -1858,6 +2064,7 @@ if (typeof document !== 'undefined') {
       const counts = n.neighbors.length;
       const pathDetails = freezePathSummary(n, graphModel, ui.path);
       const attachments = Array.isArray(n.attachments) ? n.attachments.filter((a) => a && (a.url || a.label)) : [];
+      const hops = hopDistanceFor(id);
 
       readout.innerHTML =
         (ui.editing
@@ -1869,6 +2076,9 @@ if (typeof document !== 'undefined') {
         `<h2>${escapeHtml(n.name)}</h2>` +
         `<p class="ro-role">${escapeHtml(n.role || '')}</p>` +
         `<span class="typechip"><i style="background:${type.color}"></i>${escapeHtml(type.label)}</span>` +
+        (ui.hopColor
+          ? `<span class="ro-hopchip"><i style="background:${freezeHopPaper(hops)}"></i>${hops === 0 ? 'Josh hub' : hops >= 99 ? 'Unlinked' : hops + ' hop' + (hops === 1 ? '' : 's') + ' from Josh'}</span>`
+          : '') +
         `<p class="ro-blurb">${escapeHtml(n.blurb || '')}</p>` +
         (affiliations ? `<p class="ro-affil">Affiliations: ${escapeHtml(affiliations)}</p>` : '') +
         (attachments.length
@@ -1887,7 +2097,13 @@ if (typeof document !== 'undefined') {
         '</div>' +
         (connections.length
           ? '<ul class="ro-connections" aria-label="Direct connections">' +
-            connections.slice(0, 8).map((c) => `<li>${escapeHtml(c.text)}</li>`).join('') +
+            connections.slice(0, 8).map((c) =>
+              `<li class="ro-conn-row"><span class="ro-conn-text">${escapeHtml(c.text)}</span>` +
+              (ui.editing
+                ? `<button type="button" class="btn btn-ghost btn-tiny" data-edit-edge="${escapeHtml(c.edge.id)}">Edit label</button>`
+                : '') +
+              '</li>'
+            ).join('') +
             '</ul>'
           : '') +
         (links.length
@@ -1910,6 +2126,9 @@ if (typeof document !== 'undefined') {
       }
       for (const b of readout.querySelectorAll('[data-edit]')) {
         b.addEventListener('click', () => handleEditAction(b.getAttribute('data-edit'), id));
+      }
+      for (const b of readout.querySelectorAll('[data-edit-edge]')) {
+        b.addEventListener('click', () => openEdgeModal(b.getAttribute('data-edit-edge')));
       }
     }
 
@@ -2100,6 +2319,12 @@ if (typeof document !== 'undefined') {
             showToast('Yarn link cancelled.');
           } else if (noteModal && !noteModal.hidden) {
             closeNoteModal();
+          } else if (document.getElementById('edge-modal') && !document.getElementById('edge-modal').hidden) {
+            closeEdgeModal();
+          } else if (document.getElementById('suggest-modal') && !document.getElementById('suggest-modal').hidden) {
+            closeSuggestModal();
+          } else if (document.getElementById('suggestions-modal') && !document.getElementById('suggestions-modal').hidden) {
+            closeSuggestionsModal();
           } else {
             clearSelection();
           }
@@ -2573,14 +2798,10 @@ if (typeof document !== 'undefined') {
       );
     }
 
-    function reorganizeAroundJosh() {
+    function layoutNodesAroundJoshInPlace() {
       const joshId = freezeJoshId();
       const josh = byId.get(joshId) || NODES.find((n) => /^josh freese$/i.test(n.name));
-      if (!josh) {
-        showToast('Josh Freese not found — cannot reorganize.');
-        return;
-      }
-      showToast('Reorganizing around Josh…');
+      if (!josh) return null;
       const model = freezeGraphModel(NODES, EDGES);
       const dist = new Map();
       const queue = [josh.id];
@@ -2588,8 +2809,7 @@ if (typeof document !== 'undefined') {
       while (queue.length) {
         const cur = queue.shift();
         const d = dist.get(cur);
-        const nbrs = model.adjacency.get(cur) || [];
-        for (const { id: other } of nbrs) {
+        for (const { id: other } of (model.adjacency.get(cur) || [])) {
           if (dist.has(other)) continue;
           dist.set(other, d + 1);
           queue.push(other);
@@ -2615,7 +2835,6 @@ if (typeof document !== 'undefined') {
           n.y = originY + Math.sin(angle) * radius - n.h / 2;
         });
       }
-      // light separation pass
       for (let pass = 0; pass < 18; pass++) {
         for (let i = 0; i < NODES.length; i++) {
           for (let j = i + 1; j < NODES.length; j++) {
@@ -2637,87 +2856,468 @@ if (typeof document !== 'undefined') {
       for (const n of NODES) {
         n.x = clamp(n.x, 40, WORLD.w - n.w - 40);
         n.y = clamp(n.y, 40, WORLD.h - n.h - 40);
+        n.cx = n.x + n.w / 2;
+        n.cy = n.y + n.h / 2;
+      }
+      return josh;
+    }
+
+    function syncLayoutToggleUi() {
+      const layoutBtn = document.getElementById('btn-layout');
+      const layoutLabel = document.getElementById('layout-label');
+      const auto = ui.layoutMode === 'auto';
+      if (layoutBtn) {
+        layoutBtn.setAttribute('aria-checked', String(auto));
+        layoutBtn.classList.toggle('on', auto);
+      }
+      if (layoutLabel) layoutLabel.textContent = auto ? 'Auto sort' : 'Trad view';
+    }
+
+    function setLayoutMode(mode) {
+      const next = mode === 'auto' ? 'auto' : 'trad';
+      if (next === ui.layoutMode) {
+        syncLayoutToggleUi();
+        return;
+      }
+      if (next === 'auto') {
+        if (!tradLayoutSnapshot) tradLayoutSnapshot = captureTradPositions();
+        const josh = layoutNodesAroundJoshInPlace();
+        if (!josh) {
+          tradLayoutSnapshot = null;
+          showToast('Josh Freese not found — cannot Auto sort.');
+          return;
+        }
+        ui.layoutMode = 'auto';
+        rebuildGraphModel();
+        remountNodes();
+        renderEdges();
+        renderLabels();
+        applyHopColorsToDom();
+        centerNode(josh.id);
+        showToast('Auto sort — display-only rings from Josh (Trad positions kept).');
+      } else {
+        if (tradLayoutSnapshot) applyPositionList(tradLayoutSnapshot);
+        tradLayoutSnapshot = null;
+        ui.layoutMode = 'trad';
+        rebuildGraphModel();
+        remountNodes();
+        renderEdges();
+        renderLabels();
+        applyHopColorsToDom();
+        showToast('Trad view — saved cork positions.');
+      }
+      syncLayoutToggleUi();
+      if (ui.selected) {
+        setPathForNode(ui.selected);
+        updateReadout(ui.selected);
+      }
+      scheduleFrame({ lodPaint: true });
+    }
+
+    function toggleLayoutMode() {
+      setLayoutMode(ui.layoutMode === 'auto' ? 'trad' : 'auto');
+    }
+
+    function syncHopColorToggleUi() {
+      const hopBtn = document.getElementById('btn-hop-color');
+      if (!hopBtn) return;
+      hopBtn.setAttribute('aria-checked', String(!!ui.hopColor));
+      hopBtn.classList.toggle('on', !!ui.hopColor);
+    }
+
+    function setHopColor(on) {
+      ui.hopColor = !!on;
+      freezeWriteHopColorPref(ui.hopColor);
+      syncHopColorToggleUi();
+      applyHopColorsToDom();
+      updateReadout(ui.selected);
+      showToast(ui.hopColor ? 'Stickies colored by hops from Josh.' : 'Sticky paper colors restored.');
+    }
+
+    function toggleHopColor() {
+      setHopColor(!ui.hopColor);
+    }
+
+    function openEdgeModal(edgeId) {
+      if (ui.viewOnly || !ui.editing) {
+        showToast('Edit mode required to change pathway labels.');
+        return;
+      }
+      const edge = EDGES.find((e) => e.id === edgeId);
+      if (!edge) {
+        showToast('Pathway not found.');
+        return;
+      }
+      editingEdgeId = edge.id;
+      const modal = document.getElementById('edge-modal');
+      const form = document.getElementById('edge-form');
+      const label = document.getElementById('edge-label');
+      const evidence = document.getElementById('edge-evidence');
+      const hint = document.getElementById('edge-modal-hint');
+      const a = byId.get(edge.from);
+      const b = byId.get(edge.to);
+      if (hint) {
+        hint.textContent = `Yarn between ${(a && a.name) || edge.from} and ${(b && b.name) || edge.to}.`;
+      }
+      if (label) label.value = edge.label || '';
+      if (evidence) evidence.value = edge.evidence || '';
+      if (modal) modal.hidden = false;
+      if (label) label.focus();
+      if (form) form.dataset.edgeId = edge.id;
+    }
+
+    function closeEdgeModal() {
+      editingEdgeId = null;
+      const modal = document.getElementById('edge-modal');
+      if (modal) modal.hidden = true;
+    }
+
+    function submitEdgeForm(ev) {
+      if (ev) ev.preventDefault();
+      if (!editingEdgeId) return;
+      const edge = EDGES.find((e) => e.id === editingEdgeId);
+      if (!edge) {
+        closeEdgeModal();
+        return;
+      }
+      const labelEl = document.getElementById('edge-label');
+      const evidenceEl = document.getElementById('edge-evidence');
+      const label = String(labelEl && labelEl.value || '').trim();
+      if (!label) {
+        showToast('Pathway label is required.');
+        return;
+      }
+      edge.label = label;
+      const evidence = String(evidenceEl && evidenceEl.value || '').trim();
+      if (evidence) edge.evidence = evidence;
+      else delete edge.evidence;
+      closeEdgeModal();
+      rebuildGraphModel();
+      renderLabels();
+      persistBoard(true);
+      if (ui.selected) updateReadout(ui.selected);
+      showToast('Pathway label saved on this device.');
+    }
+
+    function openSuggestModal() {
+      const modal = document.getElementById('suggest-modal');
+      const text = document.getElementById('suggest-text');
+      const hint = document.getElementById('suggest-attach-hint');
+      const node = ui.selected ? byId.get(ui.selected) : null;
+      const pathEdge = (ui.path && ui.path.edges && ui.path.edges[0]) || null;
+      ui.suggestEdgeId = pathEdge ? pathEdge.id : null;
+      if (hint) {
+        if (node && pathEdge) {
+          hint.textContent = `Attaches “${node.name}” and yarn “${pathEdge.label || pathEdge.id}”.`;
+        } else if (node) {
+          hint.textContent = `Attaches selected note “${node.name}”.`;
+        } else {
+          hint.textContent = 'Select a note first so the editor can jump to it.';
+        }
+      }
+      if (text) text.value = '';
+      if (modal) modal.hidden = false;
+      if (text) text.focus();
+    }
+
+    function closeSuggestModal() {
+      const modal = document.getElementById('suggest-modal');
+      if (modal) modal.hidden = true;
+    }
+
+    function buildSuggestionPayload(text) {
+      const node = ui.selected ? byId.get(ui.selected) : null;
+      const edge = ui.suggestEdgeId ? EDGES.find((e) => e.id === ui.suggestEdgeId) : null;
+      return {
+        id: 'sug_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        createdAt: new Date().toISOString(),
+        text: String(text || '').trim(),
+        nodeId: node ? node.id : null,
+        edgeId: edge ? edge.id : null,
+        fromName: node ? node.name : null,
+      };
+    }
+
+    function suggestionDiscordPack(sug) {
+      const blurb =
+        'Freese Index suggestion' +
+        (sug.fromName ? ` (re: ${sug.fromName})` : '') +
+        ':\n' +
+        sug.text +
+        '\n\n```json\n' +
+        JSON.stringify(sug, null, 2) +
+        '\n```';
+      return blurb;
+    }
+
+    function appendSuggestion(sug) {
+      const list = freezeReadSuggestions();
+      list.unshift(sug);
+      freezeWriteSuggestions(list.slice(0, 80));
+    }
+
+    async function copySuggestionForDiscord() {
+      const textEl = document.getElementById('suggest-text');
+      const text = String(textEl && textEl.value || '').trim();
+      if (!text) {
+        showToast('Write a suggestion first.');
+        return;
+      }
+      const sug = buildSuggestionPayload(text);
+      appendSuggestion(sug);
+      const ok = await copyText(suggestionDiscordPack(sug));
+      showToast(ok
+        ? 'Copied Discord pack (JSON + blurb). Also saved on this device.'
+        : 'Saved locally — copy failed; paste from Suggestions later.');
+    }
+
+    function submitSuggestForm(ev) {
+      if (ev) ev.preventDefault();
+      const textEl = document.getElementById('suggest-text');
+      const text = String(textEl && textEl.value || '').trim();
+      if (!text) {
+        showToast('Write a suggestion first.');
+        return;
+      }
+      const sug = buildSuggestionPayload(text);
+      appendSuggestion(sug);
+      closeSuggestModal();
+      showToast('Suggestion saved on this device. Use Copy for Discord to share.');
+    }
+
+    function jumpToSuggestion(sug) {
+      if (sug.nodeId && byId.has(sug.nodeId)) {
+        selectNode(sug.nodeId);
+        centerNode(sug.nodeId);
+        return;
+      }
+      if (sug.edgeId) {
+        const edge = EDGES.find((e) => e.id === sug.edgeId);
+        if (edge) {
+          const focusId = byId.has(edge.from) ? edge.from : edge.to;
+          if (focusId) {
+            selectNode(focusId);
+            centerNode(focusId);
+          }
+        }
+      }
+    }
+
+    function renderSuggestionsList() {
+      const listEl = document.getElementById('suggestions-list');
+      if (!listEl) return;
+      const items = freezeReadSuggestions();
+      if (!items.length) {
+        listEl.innerHTML = '<li><p class="sug-text">No suggestions yet. Paste JSON from Discord above, or save one in view mode.</p></li>';
+        return;
+      }
+      listEl.innerHTML = items.map((s) => {
+        const meta = [
+          s.fromName ? `Note: ${s.fromName}` : null,
+          s.nodeId ? `id ${s.nodeId}` : null,
+          s.edgeId ? `yarn ${s.edgeId}` : null,
+          s.createdAt ? s.createdAt.slice(0, 19).replace('T', ' ') : null,
+        ].filter(Boolean).join(' · ');
+        return (
+          `<li data-sug-id="${escapeHtml(s.id)}">` +
+          `<p class="sug-text">${escapeHtml(s.text || '')}</p>` +
+          (meta ? `<p class="sug-meta">${escapeHtml(meta)}</p>` : '') +
+          '<div class="sug-actions">' +
+          '<button type="button" class="btn btn-ghost btn-tiny" data-sug-act="jump">Jump</button>' +
+          '<button type="button" class="btn btn-ghost btn-tiny" data-sug-act="done">Done</button>' +
+          '<button type="button" class="btn btn-ghost btn-tiny" data-sug-act="dismiss">Dismiss</button>' +
+          '</div></li>'
+        );
+      }).join('');
+      for (const li of listEl.querySelectorAll('[data-sug-id]')) {
+        const id = li.getAttribute('data-sug-id');
+        const sug = items.find((s) => s.id === id);
+        if (!sug) continue;
+        for (const btn of li.querySelectorAll('[data-sug-act]')) {
+          btn.addEventListener('click', () => {
+            const act = btn.getAttribute('data-sug-act');
+            if (act === 'jump') {
+              jumpToSuggestion(sug);
+              closeSuggestionsModal();
+              return;
+            }
+            const next = freezeReadSuggestions().filter((s) => s.id !== id);
+            freezeWriteSuggestions(next);
+            renderSuggestionsList();
+            showToast(act === 'done' ? 'Marked done.' : 'Dismissed.');
+          });
+        }
+      }
+    }
+
+    function openSuggestionsModal() {
+      const modal = document.getElementById('suggestions-modal');
+      const importEl = document.getElementById('suggestions-import');
+      if (importEl) importEl.value = '';
+      renderSuggestionsList();
+      if (modal) modal.hidden = false;
+    }
+
+    function closeSuggestionsModal() {
+      const modal = document.getElementById('suggestions-modal');
+      if (modal) modal.hidden = true;
+    }
+
+    function importSuggestionsFromTextarea() {
+      const importEl = document.getElementById('suggestions-import');
+      const raw = String(importEl && importEl.value || '').trim();
+      if (!raw) {
+        showToast('Paste suggestion JSON first.');
+        return;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_) {
+        showToast('Import failed — not valid JSON.');
+        return;
+      }
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      const list = freezeReadSuggestions();
+      let added = 0;
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        const text = String(row.text || '').trim();
+        if (!text) continue;
+        const sug = {
+          id: row.id || ('sug_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
+          createdAt: row.createdAt || new Date().toISOString(),
+          text,
+          nodeId: row.nodeId || null,
+          edgeId: row.edgeId || null,
+          fromName: row.fromName || null,
+        };
+        if (list.some((s) => s.id === sug.id)) continue;
+        list.unshift(sug);
+        added += 1;
+      }
+      freezeWriteSuggestions(list.slice(0, 80));
+      if (importEl) importEl.value = '';
+      renderSuggestionsList();
+      showToast(added ? `Imported ${added} suggestion${added === 1 ? '' : 's'}.` : 'Nothing new to import.');
+    }
+
+    function reorganizeAroundJosh() {
+      if (ui.viewOnly) {
+        showToast('View-only — use Auto sort for a display-only ring layout.');
+        return;
+      }
+      if (!window.confirm(
+        'WARNING: This permanently moves saved sticky positions around Josh.\n\nPrefer Auto sort for a display-only layout that keeps Trad positions.\n\nContinue and mutate the board?'
+      )) return;
+      if (ui.layoutMode === 'auto') {
+        tradLayoutSnapshot = null;
+        ui.layoutMode = 'trad';
+        syncLayoutToggleUi();
+      }
+      showToast('Reorganizing around Josh…');
+      const josh = layoutNodesAroundJoshInPlace();
+      if (!josh) {
+        showToast('Josh Freese not found — cannot reorganize.');
+        return;
       }
       refreshBoard({ persist: true, fit: true });
-      showToast('Board reorganized around Josh Freese.');
+      showToast('Board reorganized around Josh Freese (saved positions updated).');
     }
 
     function exportBoardPng() {
-      showToast('Rendering PNG…');
-      // Fit export to a safe canvas budget (~4096 max edge) for ~500 notes.
-      const pad = 40;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const n of NODES) {
-        minX = Math.min(minX, n.x);
-        minY = Math.min(minY, n.y);
-        maxX = Math.max(maxX, n.x + n.w);
-        maxY = Math.max(maxY, n.y + n.h);
-      }
-      if (!Number.isFinite(minX)) {
+      showToast('Rendering viewport PNG…');
+      const cssW = svg.clientWidth || 0;
+      const cssH = svg.clientHeight || 0;
+      if (!cssW || !cssH) {
         showToast('Nothing to export.');
         return;
       }
-      const bw = maxX - minX + pad * 2;
-      const bh = maxY - minY + pad * 2;
-      const maxEdge = 4096;
-      const scale = Math.min(1, maxEdge / Math.max(bw, bh));
-      const outW = Math.max(1, Math.round(bw * scale));
-      const outH = Math.max(1, Math.round(bh * scale));
+      const dpr = 2;
+      let outW = Math.round(cssW * dpr);
+      let outH = Math.round(cssH * dpr);
+      const maxEdge = 3072;
+      const scaleCap = Math.min(1, maxEdge / Math.max(outW, outH));
+      outW = Math.max(1, Math.round(outW * scaleCap));
+      outH = Math.max(1, Math.round(outH * scaleCap));
+      const sx = outW / cssW;
+      const sy = outH / cssH;
 
-      // Snapshot must be SVG-complete (uncull + full yarn) — far LOD uses canvas for live view only.
-      for (const [, g] of nodeEls) g.classList.remove('is-culled');
-      if (edgesCorePath) edgesCorePath.setAttribute('d', edgePathData(edgesByTier('core'), null));
-      if (edgesStrongPath) edgesStrongPath.setAttribute('d', edgePathData(edgesByTier('strong'), null));
-      edgesPath.setAttribute('d', edgePathData(edgesByTier('related'), null));
-
-      const clone = svg.cloneNode(true);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clone.setAttribute('width', String(outW));
-      clone.setAttribute('height', String(outH));
-      clone.setAttribute('viewBox', `${minX - pad} ${minY - pad} ${bw} ${bh}`);
-      const worldEl = clone.querySelector('#world');
-      if (worldEl) worldEl.removeAttribute('transform');
-      // Restore live LOD after cloning the hydrated SVG.
-      flushFrame();
-
-      const serializer = new XMLSerializer();
-      const svgText = serializer.serializeToString(clone);
-      const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = outW;
-          canvas.height = outH;
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#5c4124';
-          ctx.fillRect(0, 0, outW, outH);
-          ctx.drawImage(img, 0, 0, outW, outH);
-          canvas.toBlob((png) => {
-            URL.revokeObjectURL(url);
-            if (!png) {
-              showToast('PNG export failed in this browser.');
-              return;
-            }
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(png);
-            a.download = 'freese-index-board.png';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            showToast(`Exported PNG (${outW}\u00d7${outH}).`);
-          }, 'image/png');
-        } catch (_) {
-          URL.revokeObjectURL(url);
-          showToast('PNG export failed.');
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = outW;
+        canvas.height = outH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          showToast('PNG export failed in this browser.');
+          return;
         }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        showToast('Could not rasterize the board SVG.');
-      };
-      img.src = url;
+        ctx.setTransform(sx, 0, 0, sy, 0, 0);
+        ctx.fillStyle = '#5c4124';
+        ctx.fillRect(0, 0, cssW, cssH);
+
+        const s = view.scale;
+        const tx = view.tx;
+        const ty = view.ty;
+        const pad = 48 / Math.max(s, ZOOM_MIN);
+        const rect = {
+          x0: (-tx) / s - pad,
+          y0: (-ty) / s - pad,
+          x1: (cssW - tx) / s + pad,
+          y1: (cssH - ty) / s + pad,
+        };
+        const visible = NODES.filter((n) =>
+          n.cx >= rect.x0 && n.cx <= rect.x1 && n.cy >= rect.y0 && n.cy <= rect.y1
+        );
+        const cosmos = isCosmosLod();
+        paintLodYarn(ctx, rect, s, tx, ty, cosmos);
+        if (cosmos) {
+          paintCosmosDots(ctx, visible, s, tx, ty, cssW, cssH);
+        } else if (isCompactLod() || isAtlasLod()) {
+          if (isCompactLod()) paintCompactNotes(ctx, visible, s, tx, ty, cssW, cssH);
+          else paintAtlasLabels(ctx, visible, s, tx, ty, cssW, cssH);
+        } else {
+          // Near LOD: draw stickies as paper chips matching screen size.
+          for (const n of visible) {
+            const x = n.x * s + tx;
+            const y = n.y * s + ty;
+            const w = n.w * s;
+            const h = n.h * s;
+            ctx.fillStyle = 'rgba(28, 16, 6, 0.28)';
+            ctx.fillRect(x + 1.5, y + 2, w, h);
+            ctx.fillStyle = paperForNode(n);
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+            ctx.beginPath();
+            ctx.fillStyle = n.pin || '#c62828';
+            ctx.arc(x + w / 2, y + (n.big ? 5.5 : 4.5) * s, Math.max(2, (n.big ? 3.4 : 2.6) * s), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = n.ink || '#2a1a0c';
+            ctx.font = '800 ' + Math.max(8, Math.min(14, h * 0.38)) + 'px ' + lodFontFamily;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(noteFaceLabel(n.name), x + w / 2, y + h * 0.58);
+          }
+        }
+
+        canvas.toBlob((png) => {
+          if (!png) {
+            showToast('PNG export failed in this browser.');
+            return;
+          }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(png);
+          a.download = 'freese-index-viewport.png';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          showToast(`Exported viewport PNG (${outW}\u00d7${outH}).`);
+        }, 'image/png');
+      } catch (_) {
+        showToast('PNG export failed.');
+      }
     }
 
     /* ================= local board snapshot / actions ================= */
@@ -2747,8 +3347,6 @@ if (typeof document !== 'undefined') {
 
     function downloadSnapshot() {
       const snap = currentSnapshot();
-      persistBoard(true);
-      freezeWriteCheckpoint(snap);
       const payload = JSON.stringify(snap, null, 2);
       const blob = new Blob([payload], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -2759,6 +3357,16 @@ if (typeof document !== 'undefined') {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    }
+
+    function saveBoardCheckpoint() {
+      if (ui.viewOnly) {
+        showToast('View-only link — nothing to save here.');
+        return;
+      }
+      persistBoard(true);
+      freezeWriteCheckpoint(currentSnapshot());
+      showToast('Checkpoint saved on this device — not published.');
     }
 
     function revertToLastSave() {
@@ -2804,6 +3412,57 @@ if (typeof document !== 'undefined') {
     if (reorgBtn) reorgBtn.addEventListener('click', reorganizeAroundJosh);
     const pngBtn = document.getElementById('btn-export-png');
     if (pngBtn) pngBtn.addEventListener('click', exportBoardPng);
+    const hopBtn = document.getElementById('btn-hop-color');
+    if (hopBtn) hopBtn.addEventListener('click', toggleHopColor);
+    const layoutBtn = document.getElementById('btn-layout');
+    if (layoutBtn) layoutBtn.addEventListener('click', toggleLayoutMode);
+    const suggestBtn = document.getElementById('btn-suggest');
+    if (suggestBtn) {
+      suggestBtn.hidden = !ui.viewOnly;
+      suggestBtn.addEventListener('click', () => {
+        if (!ui.selected) {
+          showToast('Select a sticky note first, then Suggest change.');
+          return;
+        }
+        openSuggestModal();
+      });
+    }
+    const suggestionsBtn = document.getElementById('btn-suggestions');
+    if (suggestionsBtn) {
+      suggestionsBtn.addEventListener('click', openSuggestionsModal);
+    }
+    const edgeForm = document.getElementById('edge-form');
+    if (edgeForm) edgeForm.addEventListener('submit', submitEdgeForm);
+    const edgeCancel = document.getElementById('edge-cancel');
+    if (edgeCancel) edgeCancel.addEventListener('click', closeEdgeModal);
+    const edgeModal = document.getElementById('edge-modal');
+    if (edgeModal) {
+      edgeModal.addEventListener('click', (ev) => {
+        if (ev.target === edgeModal) closeEdgeModal();
+      });
+    }
+    const suggestForm = document.getElementById('suggest-form');
+    if (suggestForm) suggestForm.addEventListener('submit', submitSuggestForm);
+    const suggestCancel = document.getElementById('suggest-cancel');
+    if (suggestCancel) suggestCancel.addEventListener('click', closeSuggestModal);
+    const suggestCopy = document.getElementById('suggest-copy');
+    if (suggestCopy) suggestCopy.addEventListener('click', () => { copySuggestionForDiscord(); });
+    const suggestModal = document.getElementById('suggest-modal');
+    if (suggestModal) {
+      suggestModal.addEventListener('click', (ev) => {
+        if (ev.target === suggestModal) closeSuggestModal();
+      });
+    }
+    const suggestionsClose = document.getElementById('suggestions-close');
+    if (suggestionsClose) suggestionsClose.addEventListener('click', closeSuggestionsModal);
+    const suggestionsImportBtn = document.getElementById('suggestions-import-btn');
+    if (suggestionsImportBtn) suggestionsImportBtn.addEventListener('click', importSuggestionsFromTextarea);
+    const suggestionsModal = document.getElementById('suggestions-modal');
+    if (suggestionsModal) {
+      suggestionsModal.addEventListener('click', (ev) => {
+        if (ev.target === suggestionsModal) closeSuggestionsModal();
+      });
+    }
     if (noteForm) noteForm.addEventListener('submit', submitNoteForm);
     const noteCancel = document.getElementById('note-cancel');
     if (noteCancel) noteCancel.addEventListener('click', closeNoteModal);
@@ -2859,8 +3518,7 @@ if (typeof document !== 'undefined') {
         const action = btn.getAttribute('data-action');
         try {
           if (action === 'save') {
-            downloadSnapshot();
-            showToast('Saved checkpoint on this device (+ JSON download). Share URL stays the public board.');
+            saveBoardCheckpoint();
             return;
           }
           if (action === 'revert') {
@@ -2874,7 +3532,12 @@ if (typeof document !== 'undefined') {
           if (action === 'copy') {
             persistBoard(true);
             const ok = await copyText(JSON.stringify(currentSnapshot(), null, 2));
-            showToast(ok ? 'Copied board JSON.' : 'Could not copy — use Save instead.');
+            showToast(ok ? 'Copied board JSON.' : 'Could not copy — try again.');
+            return;
+          }
+          if (action === 'download') {
+            downloadSnapshot();
+            showToast('Downloaded board JSON backup.');
             return;
           }
           if (action === 'share') {
@@ -2977,7 +3640,13 @@ if (typeof document !== 'undefined') {
     if (NODES.length <= 60 && !MOBILE_LIGHT) document.body.classList.add('settle-anim');
     buildNodes();
     rebuildNodeIndex();
-    const savedCamera = freezeReadCamera();
+    rebuildHopDistances();
+    applyHopColorsToDom();
+    syncHopColorToggleUi();
+    syncLayoutToggleUi();
+
+    const guestCamera = !!(ui.viewOnly || ui.shared);
+    const savedCamera = guestCamera ? null : freezeReadCamera();
     if (savedCamera) {
       view.tx = savedCamera.tx;
       view.ty = savedCamera.ty;
@@ -2986,12 +3655,22 @@ if (typeof document !== 'undefined') {
       clampPan();
       applyTransform();
     } else {
-      fitView();
+      const joshId = freezeJoshId();
+      const josh = byId.get(joshId) || NODES.find((n) => /^josh freese$/i.test(n.name));
+      if (josh) {
+        view.scale = clamp(MOBILE_LIGHT ? 0.55 : 0.7, ZOOM_MIN, ZOOM_MAX);
+        centerNode(josh.id);
+      } else {
+        fitView();
+      }
     }
     flushFrame();
     updateReadout(null);
     if (!ui.viewOnly) persistBoard(true); // keep expanded cork size in this browser
-    persistCamera(true);
+    if (!guestCamera) persistCamera(true);
+    else {
+      // Guest / shared boot should not overwrite the editor's remembered camera.
+    }
     showToast(ui.viewOnly
       ? 'View-only board — pan, deep-zoom, and search. Editing is off.'
       : (MOBILE_LIGHT
