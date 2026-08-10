@@ -261,6 +261,25 @@ body {
 }
 body.editing .badge-mode svg { display: none; }
 
+.btn-edit,
+.btn-add {
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.btn-edit[aria-pressed="true"] {
+  background: linear-gradient(180deg, #e8f6ea, #c8e6c9);
+  border-color: #5a9a62;
+  color: #1e4a28;
+}
+.btn-add {
+  background: linear-gradient(180deg, #fff6e8, #f0d4a8);
+  border-color: #b8894a;
+  color: #5a3410;
+}
+.btn-add:hover {
+  background: linear-gradient(180deg, #fffaf0, #f5dfb5);
+}
+
 .btn-tiny {
   padding: 2px 8px;
   font-size: 11px;
@@ -421,58 +440,59 @@ body.linking #graph { cursor: crosshair; }
     linear-gradient(180deg, rgba(40, 24, 10, 0.12), transparent 18%, transparent 78%, rgba(28, 14, 6, 0.28));
 }
 
-/* strings — red yarn (non-scaling stroke so yarn stays visible when zoomed out) */
+/* strings — red yarn (non-scaling; no filters on the bulk web — those kill FPS at ~500 notes) */
 .strings {
   fill: none;
   stroke: var(--yarn);
-  stroke-width: 1.65;
+  stroke-width: 1.5;
   stroke-linecap: round;
-  stroke-dasharray: 11 1.6 3 1.6;
-  opacity: 0.78;
-  transition: opacity 0.22s ease;
+  opacity: 0.72;
+  transition: opacity 0.18s ease;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .strings-tier-related {
-  opacity: 0.55;
-  stroke-width: 1.25;
+  opacity: 0.42;
+  stroke-width: 1.15;
   stroke: #b33a32;
 }
 .strings-tier-strong {
-  opacity: 0.7;
-  stroke-width: 1.55;
+  opacity: 0.58;
+  stroke-width: 1.4;
 }
 .strings-tier-core {
-  opacity: 0.88;
-  stroke-width: 1.9;
-  filter: drop-shadow(0 0 1.5px rgba(180, 30, 25, 0.35));
+  opacity: 0.78;
+  stroke-width: 1.7;
 }
 .strings-active {
   opacity: 0;
-  stroke-width: 2.6;
+  stroke-width: 2.4;
   stroke: var(--yarn-bright);
-  stroke-dasharray: none;
-  filter: drop-shadow(0 0 5px rgba(229, 57, 53, 0.55));
 }
 body.has-active .strings-active { opacity: 0.95; }
 .strings-path {
   opacity: 0;
-  stroke-width: 2.4;
+  stroke-width: 2.2;
   stroke: #ff5252;
-  stroke-dasharray: 14 4;
-  filter: drop-shadow(0 0 4px rgba(229, 57, 53, 0.5));
+  stroke-dasharray: 10 4;
   pointer-events: none;
-  animation: yarn-pulse 1.4s ease-in-out infinite;
 }
 body.has-active .strings-path { opacity: 0.95; }
 
-/* When a note is selected, keep the full web faintly visible under the highlight */
-body.has-active .strings-tier-related { opacity: 0.22; }
-body.has-active .strings-tier-strong { opacity: 0.3; }
-body.has-active .strings-tier-core { opacity: 0.36; }
+body.has-active .strings-tier-related { opacity: 0.18; }
+body.has-active .strings-tier-strong { opacity: 0.24; }
+body.has-active .strings-tier-core { opacity: 0.3; }
 
-@keyframes yarn-pulse {
-  0%, 100% { stroke-opacity: 0.85; }
-  50% { stroke-opacity: 1; }
+/* Far zoom LOD — hide note chrome so pan/zoom stays smooth */
+body.lod-far .node .lbl,
+body.lod-far .node .sub,
+body.lod-far .node .pin,
+body.lod-far .edge-label {
+  display: none;
+}
+body.lod-far .strings {
+  opacity: 0.5;
+  stroke-width: 1.1;
 }
 
 .edge-label {
@@ -510,7 +530,9 @@ body.dim .edge-label.path-hl { opacity: 0.95; }
   pointer-events: none;
   transform-box: fill-box;
   transform-origin: center;
-  animation: note-settle 0.55s cubic-bezier(0.22, 1.15, 0.36, 1) both;
+}
+body.settle-anim .node .note {
+  animation: note-settle 0.45s cubic-bezier(0.22, 1.15, 0.36, 1) both;
 }
 
 .node .paper-shadow {

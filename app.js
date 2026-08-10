@@ -741,13 +741,12 @@ if (typeof document !== 'undefined') {
     }
 
     function edgePathData(edges) {
+      // Straight segments — quadratic yarn sag is too expensive at ~700 edges.
       let d = '';
       for (const e of edges) {
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) continue;
-        const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
-        const sag = Math.min(42, Math.hypot(b.cx - a.cx, b.cy - a.cy) * 0.09);
-        d += `M${a.cx.toFixed(1)},${a.cy.toFixed(1)} Q${mx.toFixed(1)},${(my + sag).toFixed(1)} ${b.cx.toFixed(1)},${b.cy.toFixed(1)}`;
+        d += `M${a.cx.toFixed(1)},${a.cy.toFixed(1)}L${b.cx.toFixed(1)},${b.cy.toFixed(1)}`;
       }
       return d;
     }
@@ -808,7 +807,9 @@ if (typeof document !== 'undefined') {
     }
 
     function buildNodes() {
-      const sorted = NODES.slice().sort((a, b) => NODE_DRAW_ORDER[a.type] - NODE_DRAW_ORDER[b.type]);
+      // Lean sticky DOM (~3 shapes/note). Fancy tape/shadow chrome was choking phones at ~500.
+      const sorted = NODES.slice().sort((a, b) => (NODE_DRAW_ORDER[a.type] || 0) - (NODE_DRAW_ORDER[b.type] || 0));
+      const frag = document.createDocumentFragment();
       for (const n of sorted) {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'node' + (n.big ? ' big' : ''));
@@ -817,19 +818,11 @@ if (typeof document !== 'undefined') {
         g.setAttribute('id', n.id);
         g.setAttribute('transform', `translate(${n.x},${n.y})`);
         g.setAttribute('role', 'group');
-        g.setAttribute('aria-label', `${n.name} — ${n.role}`);
+        g.setAttribute('aria-label', `${n.name} — ${n.role || 'note'}`);
 
         const note = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         note.setAttribute('class', 'note');
-        note.setAttribute('transform', `rotate(${n.tilt} ${n.w / 2} ${n.h / 2})`);
-
-        const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        shadow.setAttribute('class', 'paper-shadow');
-        shadow.setAttribute('x', 2.5);
-        shadow.setAttribute('y', 3.5);
-        shadow.setAttribute('width', n.w);
-        shadow.setAttribute('height', n.h);
-        shadow.setAttribute('rx', 2);
+        if (n.tilt) note.setAttribute('transform', `rotate(${n.tilt} ${n.w / 2} ${n.h / 2})`);
 
         const chip = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         chip.setAttribute('class', 'chip');
@@ -838,43 +831,12 @@ if (typeof document !== 'undefined') {
         chip.setAttribute('rx', 2);
         chip.setAttribute('fill', n.paper);
 
-        // Curl corner — tiny triangle fold
-        const curl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        curl.setAttribute('class', 'tape');
-        const cx = n.w;
-        const cy = n.h;
-        curl.setAttribute('d', `M${cx - 12},${cy} L${cx},${cy - 12} L${cx},${cy} Z`);
-        curl.setAttribute('fill', 'rgba(0,0,0,0.06)');
-        curl.setAttribute('stroke', 'none');
-
-        const tape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        tape.setAttribute('class', 'tape');
-        tape.setAttribute('x', n.w * 0.28);
-        tape.setAttribute('y', -5);
-        tape.setAttribute('width', n.w * 0.44);
-        tape.setAttribute('height', 12);
-        tape.setAttribute('rx', 1);
-        tape.setAttribute('transform', `rotate(${(n.tilt % 2 === 0 ? -3 : 4)} ${n.w / 2} 1)`);
-
-        const pinStem = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        pinStem.setAttribute('class', 'pin-stem');
-        pinStem.setAttribute('x1', n.w / 2);
-        pinStem.setAttribute('y1', 2);
-        pinStem.setAttribute('x2', n.w / 2);
-        pinStem.setAttribute('y2', 11);
-
         const pin = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         pin.setAttribute('class', 'pin');
         pin.setAttribute('cx', n.w / 2);
         pin.setAttribute('cy', 7);
-        pin.setAttribute('r', n.big ? 5.2 : 4.2);
+        pin.setAttribute('r', n.big ? 5 : 3.8);
         pin.setAttribute('fill', n.pin);
-
-        const pinShine = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        pinShine.setAttribute('class', 'pin-shine');
-        pinShine.setAttribute('cx', n.w / 2 - 1.4);
-        pinShine.setAttribute('cy', 5.6);
-        pinShine.setAttribute('r', 1.3);
 
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         lbl.setAttribute('class', 'lbl');
@@ -884,13 +846,8 @@ if (typeof document !== 'undefined') {
         lbl.setAttribute('fill', n.ink);
         lbl.textContent = n.name;
 
-        note.appendChild(shadow);
         note.appendChild(chip);
-        note.appendChild(curl);
-        note.appendChild(tape);
-        note.appendChild(pinStem);
         note.appendChild(pin);
-        note.appendChild(pinShine);
         note.appendChild(lbl);
 
         if (n.big) {
@@ -905,16 +862,29 @@ if (typeof document !== 'undefined') {
         }
 
         g.appendChild(note);
-        nodesG.appendChild(g);
+        frag.appendChild(g);
         nodeEls.set(n.id, g);
       }
+      nodesG.appendChild(frag);
     }
 
     /* ================= transforms ================= */
 
+    let edgeDrawRaf = 0;
+    function scheduleEdgeRedraw() {
+      if (edgeDrawRaf) return;
+      edgeDrawRaf = requestAnimationFrame(() => {
+        edgeDrawRaf = 0;
+        renderEdges();
+        // Skip labels while dragging — text churn is expensive.
+        if (drag.mode !== 'node') renderLabels();
+      });
+    }
+
     function applyTransform() {
       world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
       zoomPct.textContent = Math.round(view.scale * 100) + '%';
+      document.body.classList.toggle('lod-far', view.scale < 0.42);
     }
 
     function fitView(announce) {
@@ -1193,8 +1163,7 @@ if (typeof document !== 'undefined') {
         n.y = clamp(n.y, -n.h, WORLD.h);
         n.cx = n.x + n.w / 2; n.cy = n.y + n.h / 2;
         nodeEls.get(n.id).setAttribute('transform', `translate(${n.x},${n.y})`);
-        renderEdges();
-        renderLabels();
+        scheduleEdgeRedraw();
         return;
       }
 
@@ -1208,7 +1177,7 @@ if (typeof document !== 'undefined') {
         return;
       }
 
-      // hover (no buttons down)
+      // hover (no buttons down) — class only; do NOT setActive (that re-batched 700 edges every hover)
       if (!drag.mode && pointers.size === 0) {
         const p = worldPoint(e.clientX, e.clientY);
         const n = hitNode(p.x, p.y);
@@ -1216,7 +1185,6 @@ if (typeof document !== 'undefined') {
         if (id !== ui.hovered) {
           ui.hovered = id;
           for (const [nid, g] of nodeEls) g.classList.toggle('hovered', nid === id);
-          if (!ui.selected) setActive(id);
           svg.style.cursor = n
             ? ((ui.interactive || ui.editing || ui.linkFrom) ? 'pointer' : 'grab')
             : (ui.linkFrom ? 'crosshair' : 'grab');
@@ -1294,7 +1262,7 @@ if (typeof document !== 'undefined') {
         case 'i': case 'I': toggleInteractive(); break;
         case 'e': case 'E': toggleEditing(); break;
         case 'p': case 'P': toggleChrome(); break;
-        case 'a': case 'A': if (ui.editing) openNoteModal(); break;
+        case 'a': case 'A': startAddNote(); break;
         case 'Escape':
           if (ui.linkFrom) {
             ui.linkFrom = null;
@@ -1320,7 +1288,7 @@ if (typeof document !== 'undefined') {
       ui.editing = editing;
       document.body.classList.toggle('editing', editing);
       if (modeBtn) modeBtn.setAttribute('aria-pressed', String(editing));
-      if (modeLabel) modeLabel.textContent = editing ? 'Editing' : 'Browse';
+      if (modeLabel) modeLabel.textContent = editing ? 'Done editing' : 'Edit board';
       for (const el of document.querySelectorAll('.editor-only')) {
         el.hidden = !editing;
       }
@@ -1335,7 +1303,19 @@ if (typeof document !== 'undefined') {
 
     function toggleEditing() {
       setEditorChrome(!ui.editing);
-      showToast(ui.editing ? 'Edit mode — post notes, yarn, and attachments.' : 'Browse mode — board is read-only.');
+      showToast(ui.editing
+        ? 'Edit mode on — use Add note, or Link yarn from a selected note.'
+        : 'Browse mode — board is read-only.');
+    }
+
+    function startAddNote() {
+      if (!ui.editing) setEditorChrome(true);
+      if (!ui.chromeVisible) {
+        ui.chromeVisible = true;
+        document.body.classList.remove('chrome-collapsed');
+        if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
+      }
+      openNoteModal();
     }
 
     function toggleChrome() {
@@ -1685,6 +1665,8 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('btn-dim').addEventListener('click', toggleDim);
     if (modeBtn) modeBtn.addEventListener('click', toggleEditing);
+    const addFab = document.getElementById('btn-add-fab');
+    if (addFab) addFab.addEventListener('click', startAddNote);
     if (chromeBtn) chromeBtn.addEventListener('click', toggleChrome);
     document.getElementById('btn-zoom-in').addEventListener('click', () => {
       zoomAt(svg.clientWidth / 2, svg.clientHeight / 2, 1.3); view.fitted = true;
@@ -1695,7 +1677,7 @@ if (typeof document !== 'undefined') {
     document.getElementById('btn-fit').addEventListener('click', () => { fitView(true); view.fitted = true; });
     document.getElementById('btn-interact').addEventListener('click', toggleInteractive);
     const addBtn = document.getElementById('btn-add-note');
-    if (addBtn) addBtn.addEventListener('click', openNoteModal);
+    if (addBtn) addBtn.addEventListener('click', startAddNote);
     const reorgBtn = document.getElementById('btn-reorganize');
     if (reorgBtn) reorgBtn.addEventListener('click', reorganizeAroundJosh);
     const pngBtn = document.getElementById('btn-export-png');
@@ -1806,12 +1788,15 @@ if (typeof document !== 'undefined') {
 
     setEditorChrome(false);
     if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
+    // Skip per-note settle animation on large boards (hundreds of CSS animations tank phones).
+    if (NODES.length <= 60) document.body.classList.add('settle-anim');
     buildNodes();
     rebuildNodeIndex();
     renderEdges();
     renderLabels();
     fitView();
     updateReadout(null);
+    showToast('Tip: tap Add note (or Edit board) to post. Panels hides the chrome.');
 
     window.__freezeIndexBoard = {
       selectNode: (id) => selectNode(typeof id === 'object' ? id.id : id),
