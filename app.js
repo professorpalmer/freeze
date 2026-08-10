@@ -1,9 +1,9 @@
 /* ============================================================================
-   Freese Index — independent mockup of a RedString-style investigation board
+   Freese Index — offline cork / sticky-note investigation board
    ----------------------------------------------------------------------------
    · Pure client-side runtime: no network requests, no auth, no external assets.
-   · Graph data is a static snapshot in board-data.js (imported offline from the
-     public RedString Freese Index board via scripts/import-redstring.mjs).
+   · Graph data is a static snapshot in board-data.js (refresh via
+     scripts/import-redstring.mjs — import-only tooling, not shown in the UI).
    · Graph is rendered into a SINGLE inline <svg>. Edges are batched into
      tiered <path> elements (base + active + path accent), labels share one
      <g>, and each node is one <g>.
@@ -580,22 +580,48 @@ function freezeReadShareFlags() {
   }
 }
 
+function freezeScrubPublicCopy(nodes) {
+  if (!Array.isArray(nodes)) return nodes;
+  for (const n of nodes) {
+    if (!n || typeof n !== 'object') continue;
+    const blurb = String(n.blurb || '');
+    if (/redstring/i.test(blurb) || /Imported from Traditionology/i.test(blurb)) {
+      n.blurb = /^josh\s+freese$/i.test(String(n.name || '').trim())
+        ? 'American drummer whose career threads through punk, new wave, industrial, and arena rock — the hub of this board.'
+        : '';
+    }
+    if (n.source && typeof n.source === 'object' && n.source.url && /redstring/i.test(String(n.source.url))) {
+      delete n.source.url;
+    }
+  }
+  return nodes;
+}
+
 function freezeHydrateBoardPayload(seed) {
   const flags = freezeReadShareFlags();
   // Shared/view links can opt out of this browser's local edits (?shared=1).
   const local = flags.shared ? null : freezeReadLocalBoard();
-  if (!local) return seed;
+  const base = seed && typeof seed === 'object' ? { ...seed } : {};
+  if (base.source && base.source.url && /redstring/i.test(String(base.source.url))) {
+    base.source = { ...base.source };
+    delete base.source.url;
+  }
+  if (Array.isArray(base.nodes)) {
+    base.nodes = freezeScrubPublicCopy(base.nodes.map((n) => ({ ...n })));
+  }
+  if (!local) return base;
+  const nodes = freezeScrubPublicCopy((local.nodes || []).map((n) => ({ ...n })));
   return {
     source: {
-      ...(seed && seed.source ? seed.source : {}),
+      ...(base.source || {}),
       local: true,
       savedAt: local.meta && local.meta.savedAt,
-      nodeCount: local.nodes.length,
+      nodeCount: nodes.length,
       edgeCount: (local.edges || []).length,
     },
-    world: local.world || (seed && seed.world) || { w: 2000, h: 1400 },
-    joshId: local.joshId || (seed && seed.joshId) || null,
-    nodes: local.nodes,
+    world: local.world || base.world || { w: 2000, h: 1400 },
+    joshId: local.joshId || base.joshId || null,
+    nodes,
     edges: Array.isArray(local.edges) ? local.edges : [],
   };
 }
@@ -780,13 +806,12 @@ function freezeStartSearch(model, activate) {
 }
 
 /* ---------------------------------------------------------------------------
-   Graph data — static snapshot from Traditionology's public RedString board
-   (board-data.js). Runtime stays offline; re-import with:
-   node scripts/import-redstring.mjs
+   Graph data — static snapshot in board-data.js. Runtime stays offline.
+   Refresh tooling: node scripts/import-redstring.mjs
 --------------------------------------------------------------------------- */
 
 const TYPES = {
-  // Sticky colors match RedString note palette
+  // Sticky paper palette (pink / yellow / green / blue)
   pink:   { color: '#ffe0e6', paper: '#ffe0e6', ink: '#3a1820', pin: '#c62828', label: 'Pink note' },
   yellow: { color: '#fff3a8', paper: '#fff3a8', ink: '#2a2418', pin: '#c62828', label: 'Yellow note' },
   green:  { color: '#d8f0c8', paper: '#d8f0c8', ink: '#1e2a18', pin: '#3d7a38', label: 'Green note' },
@@ -2036,7 +2061,7 @@ if (typeof document !== 'undefined') {
         const note = source
           ? `${NODES.length} sticky notes \u00b7 ${EDGES.length} yarn strings` +
             (source.local ? ' \u00b7 local edits saved on this device' :
-              (source.url ? ` \u00b7 snapshot of Traditionology\u2019s public RedString board` : ''))
+              (source.importedAt || source.origin ? ' \u00b7 public Freese Index snapshot' : ''))
           : `${NODES.length} subjects \u00b7 ${EDGES.length} connections`;
         readout.innerHTML =
           '<p class="ro-kicker">Board status</p>' +
@@ -3391,9 +3416,6 @@ if (typeof document !== 'undefined') {
 
     /* ================= chrome buttons ================= */
 
-    document.getElementById('btn-back').addEventListener('click', () => {
-      showToast('Back — this board has no history stack.');
-    });
     document.getElementById('btn-dim').addEventListener('click', toggleDim);
     if (modeBtn) modeBtn.addEventListener('click', toggleEditing);
     const addFab = document.getElementById('btn-add-fab');
@@ -3546,10 +3568,6 @@ if (typeof document !== 'undefined') {
             showToast(ok
               ? 'Copied view-only share URL (?view=1&shared=1).'
               : 'Copy failed — use ?view=1&shared=1 on the address bar.');
-            return;
-          }
-          if (action === 'report') {
-            showToast('Report stays local — nothing was sent.');
             return;
           }
           if (action === 'discussion') {

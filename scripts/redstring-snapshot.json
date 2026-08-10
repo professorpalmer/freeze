@@ -1,6 +1,16 @@
 {
   "boardId": "a6fae60e-3c24-4bde-95f0-d7ece7d9e654",
-  "fetchedAt": "2026-08-10T02:17:57.150Z",
+  "fetchedAt": "2026-08-10T07:18:57Z",
   "nodeCount": 484,
-  "edgeCount": 770
+  "edgeCount": 770,
+  "world": {
+    "w": 5048,
+    "h": 4000
+  },
+  "nameUpdates": 0,
+  "edgeLabelUpdates": 0,
+  "addedNodes": 0,
+  "addedEdges": 0,
+  "remoteNodeCount": 484,
+  "remoteEdgeCount": 770
 }
