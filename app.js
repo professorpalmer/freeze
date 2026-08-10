@@ -7,10 +7,9 @@
    · Graph is rendered into a SINGLE inline <svg>. Edges are batched into
      tiered <path> elements (base + active + path accent), labels share one
      <g>, and each node is one <g>.
-   · Pan (drag / arrows), deep zoom (wheel / buttons / pinch) down to a
-     constellation / map-globe view, fit-to-view, dim-strings toggle, node
-     dragging when interactivity is on, hover and selection treatment, and a
-     detail/status readout. Cork grows as you explore so the board feels endless.
+   · Hot path is rAF-coalesced: pan/zoom never filter the full edge list,
+     thrash classLists, or write localStorage mid-gesture. Cork grows in
+     chunks; far zoom paints on canvas; near zoom keeps lean SVG stickies.
    ========================================================================== */
 
 'use strict';
@@ -810,6 +809,7 @@ if (typeof document !== 'undefined') {
     function rebuildGraphModel() {
       byId = finalizeNodes();
       graphModel = freezeGraphModel(NODES, EDGES);
+      rebuildEdgeTier();
     }
 
     function remountNodes() {
@@ -855,8 +855,20 @@ if (typeof document !== 'undefined') {
       return d;
     }
 
+    // Tier lists rebuilt only when the edge set changes — never filter 770 edges per frame.
+    let edgesByTierCache = { related: [], strong: [], core: [] };
+    function rebuildEdgeTier() {
+      const next = { related: [], strong: [], core: [] };
+      for (const e of EDGES) {
+        const tier = e.tier || 'related';
+        (next[tier] || next.related).push(e);
+      }
+      edgesByTierCache = next;
+    }
+    rebuildEdgeTier();
+
     function edgesByTier(tier) {
-      return EDGES.filter((e) => (e.tier || 'related') === tier);
+      return edgesByTierCache[tier] || edgesByTierCache.related;
     }
 
     /* ---------- spatial index + viewport (keeps ~500 notes feeling light) ---------- */
@@ -871,6 +883,11 @@ if (typeof document !== 'undefined') {
     let frameRaf = 0;
     let frameNeeds = { transform: false, cull: false, edges: false, labels: false, lodPaint: false };
     let lastViewport = null;
+    let lodFarOn = false;
+    let lodCosmosOn = false;
+    let lodFontFamily = '';
+    let cosmosPersistDirty = false;
+    const COSMOS_GROW_CHUNK = 12000;
 
     function spatialKey(cx, cy) {
       return ((Math.floor(cx / SPATIAL_CELL)) + ',' + Math.floor(cy / SPATIAL_CELL));
@@ -981,66 +998,67 @@ if (typeof document !== 'undefined') {
       const s = view.scale;
       const tx = view.tx;
       const ty = view.ty;
-      const toScreenX = (x) => x * s + tx;
-      const toScreenY = (y) => y * s + ty;
+      const cosmos = s < LOD_COSMOS_SCALE;
+      const dimmed = ui.dim && !ui.active;
+      // Deep cosmos: dots only — yarn becomes noise and burns fill rate.
+      const paintYarn = !cosmos || s >= 0.025;
 
-      const cosmos = isCosmosLod();
-      const dimmed = document.body.classList.contains('dim') && !ui.active;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      // Far: full yarn. Cosmos: only stronger threads so the constellation stays readable.
-      const tiers = cosmos
-        ? [
-            { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.08)' : 'rgba(198, 40, 40, 0.28)', width: 0.9 },
-            { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.42)', width: 1.15 },
-          ]
-        : [
-            { tier: 'related', stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
-            { tier: 'strong', stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
-            { tier: 'core', stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
-          ];
-      for (const style of tiers) {
-        ctx.beginPath();
-        ctx.strokeStyle = style.stroke;
-        ctx.lineWidth = style.width;
-        let any = false;
-        for (const e of EDGES) {
-          if ((e.tier || 'related') !== style.tier) continue;
-          const a = byId.get(e.from), b = byId.get(e.to);
-          if (!a || !b) continue;
-          if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
-          ctx.moveTo(toScreenX(a.cx), toScreenY(a.cy));
-          ctx.lineTo(toScreenX(b.cx), toScreenY(b.cy));
-          any = true;
+      if (paintYarn) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const tiers = cosmos
+          ? [
+              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.08)' : 'rgba(198, 40, 40, 0.28)', width: 0.9 },
+              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.42)', width: 1.15 },
+            ]
+          : [
+              { list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.08)' : 'rgba(179, 58, 50, 0.38)', width: 1.05 },
+              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.5)', width: 1.25 },
+              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.62)', width: 1.45 },
+            ];
+        for (const style of tiers) {
+          ctx.beginPath();
+          ctx.strokeStyle = style.stroke;
+          ctx.lineWidth = style.width;
+          let any = false;
+          for (const e of style.list) {
+            const a = byId.get(e.from), b = byId.get(e.to);
+            if (!a || !b) continue;
+            if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
+            ctx.moveTo(a.cx * s + tx, a.cy * s + ty);
+            ctx.lineTo(b.cx * s + tx, b.cy * s + ty);
+            any = true;
+          }
+          if (any) ctx.stroke();
         }
-        if (any) ctx.stroke();
       }
 
       const visible = nodesTouchingRect(rect);
+      if (!lodFontFamily) {
+        lodFontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
+          || 'Georgia, "Times New Roman", serif';
+      }
+
       if (cosmos) {
-        // Constellation view — colored pins as stars; name only the hubs.
+        // Constellation — fillRect dots beat arc(); hub names only.
         for (const n of visible) {
-          const sx = toScreenX(n.cx);
-          const sy = toScreenY(n.cy);
+          const sx = n.cx * s + tx;
+          const sy = n.cy * s + ty;
           if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
-          const r = n.big ? 3.4 : (s > 0.04 ? 2.1 : 1.35);
-          ctx.beginPath();
+          const r = n.big ? 3 : (s > 0.04 ? 2 : 1);
           ctx.fillStyle = n.pin || n.color || '#c62828';
-          ctx.arc(sx, sy, r, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
         }
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
-          || 'Georgia, "Times New Roman", serif';
-        ctx.font = '600 11px ' + fontFamily;
+        ctx.font = '600 11px ' + lodFontFamily;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
         for (const n of visible) {
           if (!n.big) continue;
-          const sx = toScreenX(n.cx);
-          const sy = toScreenY(n.cy) + 5;
+          const sx = n.cx * s + tx;
+          const sy = n.cy * s + ty + 5;
           if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
-          ctx.lineWidth = 3;
-          ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
           ctx.strokeText(n.name, sx, sy);
           ctx.fillStyle = n.ink || '#2a1a0c';
           ctx.fillText(n.name, sx, sy);
@@ -1048,27 +1066,23 @@ if (typeof document !== 'undefined') {
         return;
       }
 
-      // Screen-space names — fixed CSS pixels so they never disappear with zoom.
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
-        || 'Georgia, "Times New Roman", serif';
-      ctx.font = '600 11px ' + fontFamily;
+      ctx.font = '600 11px ' + lodFontFamily;
       for (const n of visible) {
-        const sx = toScreenX(n.cx);
-        const sy = toScreenY(n.cy + (n.big ? 4 : 2));
+        const sx = n.cx * s + tx;
+        const sy = (n.cy + (n.big ? 4 : 2)) * s + ty;
         if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
-        const label = n.name;
         ctx.lineWidth = 3.2;
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.9)';
-        ctx.strokeText(label, sx, sy);
+        ctx.strokeText(n.name, sx, sy);
         ctx.fillStyle = n.ink || '#2a1a0c';
-        ctx.fillText(label, sx, sy);
+        ctx.fillText(n.name, sx, sy);
         if (n.big && n.role) {
-          ctx.font = '500 9px ' + fontFamily;
+          ctx.font = '500 9px ' + lodFontFamily;
           ctx.strokeText(n.role, sx, sy + 12);
           ctx.fillText(n.role, sx, sy + 12);
-          ctx.font = '600 11px ' + fontFamily;
+          ctx.font = '600 11px ' + lodFontFamily;
         }
       }
     }
@@ -1174,8 +1188,16 @@ if (typeof document !== 'undefined') {
       if (needs.transform) {
         world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
         zoomPct.textContent = formatZoomLabel(view.scale);
-        document.body.classList.toggle('lod-far', isFarLod());
-        document.body.classList.toggle('lod-cosmos', isCosmosLod());
+        const far = isFarLod();
+        const cosmos = isCosmosLod();
+        if (far !== lodFarOn) {
+          lodFarOn = far;
+          document.body.classList.toggle('lod-far', far);
+        }
+        if (cosmos !== lodCosmosOn) {
+          lodCosmosOn = cosmos;
+          document.body.classList.toggle('lod-cosmos', cosmos);
+        }
       }
 
       const rect = viewportWorldRect();
@@ -1183,7 +1205,8 @@ if (typeof document !== 'undefined') {
 
       if (needs.cull || needs.transform) applyNodeCulling(rect);
       if (needs.edges || needs.transform) renderEdges();
-      if ((needs.labels || needs.transform) && drag.mode !== 'node') renderLabels();
+      // Skip label DOM rebuild while panning/dragging — keeps 60fps on the cork.
+      if ((needs.labels || needs.transform) && drag.mode !== 'node' && drag.mode !== 'pan') renderLabels();
       if ((needs.lodPaint || needs.transform || needs.cull) && isFarLod()) {
         paintLodCanvas(rect);
       } else if (!isFarLod() && lodCtx && lodCanvasCssW) {
@@ -1192,11 +1215,22 @@ if (typeof document !== 'undefined') {
     }
 
     function scheduleEdgeRedraw() {
-      scheduleFrame({ edges: true, labels: true, lodPaint: true, cull: true });
+      if (isFarLod()) scheduleFrame({ lodPaint: true });
+      else scheduleFrame({ edges: true, labels: true, lodPaint: true, cull: true });
     }
 
     function applyTransform() {
-      scheduleFrame({ transform: true, cull: true, edges: true, labels: true, lodPaint: true });
+      // Far/cosmos: canvas owns yarn+names — don't rebuild SVG path strings every pan frame.
+      if (view.scale < LOD_FAR_SCALE) {
+        scheduleFrame({ transform: true, cull: true, lodPaint: true });
+      } else {
+        scheduleFrame({
+          transform: true,
+          cull: true,
+          edges: true,
+          labels: drag.mode !== 'pan' && drag.mode !== 'node',
+        });
+      }
     }
 
     function buildNodes() {
@@ -1282,43 +1316,63 @@ if (typeof document !== 'undefined') {
 
     /** Grow cork when the camera approaches the edge so the board feels endless. */
     function growCosmosForViewport() {
-      const edgePad = Math.max(5000, Math.round(OPEN_BOARD_MARGIN * 0.4));
+      const softPad = Math.max(4000, Math.round(OPEN_BOARD_MARGIN * 0.25));
       const rect = viewportWorldRect(0);
+      // Hot path: most pans are inside the soft pad — bail before any alloc/DOM.
+      if (
+        rect.minX >= softPad &&
+        rect.minY >= softPad &&
+        rect.maxX <= WORLD.w - softPad &&
+        rect.maxY <= WORLD.h - softPad
+      ) {
+        return false;
+      }
+
       let nextW = WORLD.w;
       let nextH = WORLD.h;
       let shiftX = 0;
       let shiftY = 0;
-      if (rect.minX < edgePad) shiftX = Math.ceil(edgePad - rect.minX);
-      if (rect.minY < edgePad) shiftY = Math.ceil(edgePad - rect.minY);
-      if (rect.maxX > WORLD.w - edgePad) nextW = Math.ceil(rect.maxX + edgePad);
-      if (rect.maxY > WORLD.h - edgePad) nextH = Math.ceil(rect.maxY + edgePad);
+      // Grow in chunks so we don't resize the cork every pointermove near the edge.
+      if (rect.minX < softPad) {
+        shiftX = Math.ceil((softPad - rect.minX) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      }
+      if (rect.minY < softPad) {
+        shiftY = Math.ceil((softPad - rect.minY) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      }
+      if (rect.maxX > WORLD.w - softPad) {
+        nextW = WORLD.w + Math.ceil((rect.maxX + softPad - WORLD.w) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      }
+      if (rect.maxY > WORLD.h - softPad) {
+        nextH = WORLD.h + Math.ceil((rect.maxY + softPad - WORLD.h) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      }
       if (!shiftX && !shiftY && nextW === WORLD.w && nextH === WORLD.h) return false;
 
       if (shiftX || shiftY) {
         for (const n of NODES) {
           n.x += shiftX;
           n.y += shiftY;
-          if (Number.isFinite(n.cx)) n.cx += shiftX;
-          if (Number.isFinite(n.cy)) n.cy += shiftY;
+          n.cx += shiftX;
+          n.cy += shiftY;
         }
         nextW += shiftX;
         nextH += shiftY;
         view.tx -= shiftX * view.scale;
         view.ty -= shiftY * view.scale;
-      }
-      applyWorldSize({ w: nextW, h: nextH });
-      if (shiftX || shiftY) {
-        byId = finalizeNodes();
-        graphModel = freezeGraphModel(NODES, EDGES);
         for (const n of NODES) {
           const g = nodeEls.get(n.id);
-          if (!g) continue;
-          g.setAttribute('transform', `translate(${n.x},${n.y})`);
+          if (g) g.setAttribute('transform', `translate(${n.x},${n.y})`);
         }
         rebuildSpatialIndex();
       }
-      persistBoard(false);
+      applyWorldSize({ w: nextW, h: nextH });
+      cosmosPersistDirty = true;
       return true;
+    }
+
+    function flushCosmosPersist() {
+      if (!cosmosPersistDirty) return;
+      cosmosPersistDirty = false;
+      persistBoard(false);
     }
 
     function clampPan() {
@@ -1601,14 +1655,21 @@ if (typeof document !== 'undefined') {
         return;
       }
 
-      // hover (no buttons down) — class only; do NOT setActive (that re-batched 700 edges every hover)
+      // hover (no buttons down) — touch only the previous + next node (never all 484).
       if (!drag.mode && pointers.size === 0) {
         const p = worldPoint(e.clientX, e.clientY);
         const n = hitNode(p.x, p.y);
         const id = n ? n.id : null;
         if (id !== ui.hovered) {
+          if (ui.hovered) {
+            const prev = nodeEls.get(ui.hovered);
+            if (prev) prev.classList.remove('hovered');
+          }
+          if (id) {
+            const next = nodeEls.get(id);
+            if (next) next.classList.add('hovered');
+          }
           ui.hovered = id;
-          for (const [nid, g] of nodeEls) g.classList.toggle('hovered', nid === id);
           svg.style.cursor = n
             ? ((ui.editing || ui.linkFrom) ? 'pointer' : 'grab')
             : (ui.linkFrom ? 'crosshair' : 'grab');
@@ -1653,6 +1714,8 @@ if (typeof document !== 'undefined') {
           }
         }
         drag.mode = null;
+        flushCosmosPersist();
+        scheduleFrame({ transform: true, cull: true, edges: true, labels: true, lodPaint: true });
       }
     }
 
