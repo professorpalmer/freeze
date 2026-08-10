@@ -940,7 +940,19 @@ if (typeof document !== 'undefined') {
     let lodCosmosOn = false;
     let lodFontFamily = '';
     let cosmosPersistDirty = false;
+    let stickyFarLabelIds = new Set();
     const COSMOS_GROW_CHUNK = 12000;
+
+    function stableIdRank(id) {
+      // Deterministic tie-break so pan doesn't reshuffle label winners every frame.
+      let h = 2166136261;
+      const s = String(id || '');
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
 
     function spatialKey(cx, cy) {
       return ((Math.floor(cx / SPATIAL_CELL)) + ',' + Math.floor(cy / SPATIAL_CELL));
@@ -1103,6 +1115,7 @@ if (typeof document !== 'undefined') {
       }
 
       if (cosmos) {
+        stickyFarLabelIds.clear();
         // Hub / selection names only — never stamp every note at globe zoom.
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
@@ -1111,8 +1124,8 @@ if (typeof document !== 'undefined') {
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
         for (const n of visible) {
           if (!n.big && n.id !== ui.selected) continue;
-          const sx = n.cx * s + tx;
-          const sy = n.cy * s + ty + 5;
+          const sx = Math.round(n.cx * s + tx);
+          const sy = Math.round(n.cy * s + ty + 5);
           if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
           ctx.strokeText(n.name, sx, sy);
           ctx.fillStyle = n.ink || '#2a1a0c';
@@ -1121,12 +1134,19 @@ if (typeof document !== 'undefined') {
         return;
       }
 
-      // Far zoom: collision-cull screen-space names so they never melt into a white blob.
+      // Far zoom: stable collision labels — keep prior winners while panning so names don't "dance".
+      const panning = drag.mode === 'pan' || drag.mode === 'node';
       const labelCandidates = visible.slice().sort((a, b) => {
-        const aPri = (a.id === ui.selected ? 3 : 0) + (a.big ? 2 : 0);
-        const bPri = (b.id === ui.selected ? 3 : 0) + (b.big ? 2 : 0);
+        const aPri =
+          (stickyFarLabelIds.has(a.id) ? 8 : 0) +
+          (a.id === ui.selected ? 4 : 0) +
+          (a.big ? 2 : 0);
+        const bPri =
+          (stickyFarLabelIds.has(b.id) ? 8 : 0) +
+          (b.id === ui.selected ? 4 : 0) +
+          (b.big ? 2 : 0);
         if (bPri !== aPri) return bPri - aPri;
-        return (a.name || '').length - (b.name || '').length;
+        return stableIdRank(a.id) - stableIdRank(b.id);
       });
       const cell = LOD_LABEL_MIN_SEP;
       const occupied = new Set();
@@ -1144,15 +1164,20 @@ if (typeof document !== 'undefined') {
         return true;
       };
 
+      const nextSticky = new Set();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '600 11px ' + lodFontFamily;
       for (const n of labelCandidates) {
-        const sx = n.cx * s + tx;
-        const sy = (n.cy + (n.big ? 4 : 2)) * s + ty;
+        const sx = Math.round(n.cx * s + tx);
+        const sy = Math.round((n.cy + (n.big ? 4 : 2)) * s + ty);
         if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
         const force = n.id === ui.selected || n.big;
+        const wasSticky = stickyFarLabelIds.has(n.id);
+        // While dragging the camera, don't crown new labels — only keep sticky / hubs.
+        if (panning && !wasSticky && !force) continue;
         if (!canPlace(sx, sy, force)) continue;
+        nextSticky.add(n.id);
         ctx.lineWidth = 3.2;
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.9)';
         ctx.strokeText(n.name, sx, sy);
@@ -1165,6 +1190,7 @@ if (typeof document !== 'undefined') {
           ctx.font = '600 11px ' + lodFontFamily;
         }
       }
+      stickyFarLabelIds = nextSticky;
     }
 
     function applyNodeCulling(rect) {
@@ -1290,6 +1316,7 @@ if (typeof document !== 'undefined') {
       if ((needs.lodPaint || needs.transform || needs.cull) && isFarLod()) {
         paintLodCanvas(rect);
       } else if (!isFarLod() && lodCtx && lodCanvasCssW) {
+        stickyFarLabelIds.clear();
         lodCtx.clearRect(0, 0, lodCanvasCssW, lodCanvasCssH);
       }
     }
