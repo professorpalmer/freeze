@@ -3250,23 +3250,57 @@ if (typeof document !== 'undefined') {
       showToast('Board reorganized around Josh Freese (saved positions updated).');
     }
 
+    function contentClusterBounds(padWorld) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const n of NODES) {
+        const w = n.w || 180;
+        const h = n.h || 120;
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + w);
+        maxY = Math.max(maxY, n.y + h);
+      }
+      if (!Number.isFinite(minX)) return null;
+      const pad = Number.isFinite(padWorld) ? padWorld : 280;
+      return {
+        x0: minX - pad,
+        y0: minY - pad,
+        x1: maxX + pad,
+        y1: maxY + pad,
+        w: (maxX - minX) + pad * 2,
+        h: (maxY - minY) + pad * 2,
+      };
+    }
+
     function exportBoardPng() {
-      showToast('Rendering viewport PNG…');
-      const cssW = svg.clientWidth || 0;
-      const cssH = svg.clientHeight || 0;
-      if (!cssW || !cssH) {
+      showToast('Rendering board PNG…');
+      if (!NODES.length) {
         showToast('Nothing to export.');
         return;
       }
-      const dpr = 2;
-      let outW = Math.round(cssW * dpr);
-      let outH = Math.round(cssH * dpr);
+      const bounds = contentClusterBounds(280);
+      if (!bounds || bounds.w < 1 || bounds.h < 1) {
+        showToast('Nothing to export.');
+        return;
+      }
+
+      // Fit the sticky cluster to a readable canvas (cap ~3072). Ignore current camera/cosmos.
       const maxEdge = 3072;
-      const scaleCap = Math.min(1, maxEdge / Math.max(outW, outH));
-      outW = Math.max(1, Math.round(outW * scaleCap));
-      outH = Math.max(1, Math.round(outH * scaleCap));
-      const sx = outW / cssW;
-      const sy = outH / cssH;
+      const targetNotePx = 28; // ~readable sticky face size on export
+      const medianW = (() => {
+        const widths = NODES.map((n) => n.w || 180).sort((a, b) => a - b);
+        return widths[Math.floor(widths.length / 2)] || 180;
+      })();
+      let scale = targetNotePx / Math.max(24, medianW);
+      let outW = Math.round(bounds.w * scale);
+      let outH = Math.round(bounds.h * scale);
+      const cap = Math.min(1, maxEdge / Math.max(outW, outH));
+      scale *= cap;
+      outW = Math.max(640, Math.round(bounds.w * scale));
+      outH = Math.max(480, Math.round(bounds.h * scale));
 
       try {
         const canvas = document.createElement('canvas');
@@ -3277,54 +3311,38 @@ if (typeof document !== 'undefined') {
           showToast('PNG export failed in this browser.');
           return;
         }
-        ctx.setTransform(sx, 0, 0, sy, 0, 0);
         ctx.fillStyle = '#5c4124';
-        ctx.fillRect(0, 0, cssW, cssH);
+        ctx.fillRect(0, 0, outW, outH);
 
-        const s = view.scale;
-        const tx = view.tx;
-        const ty = view.ty;
-        const pad = 48 / Math.max(s, ZOOM_MIN);
-        const rect = {
-          x0: (-tx) / s - pad,
-          y0: (-ty) / s - pad,
-          x1: (cssW - tx) / s + pad,
-          y1: (cssH - ty) / s + pad,
-        };
-        const visible = NODES.filter((n) =>
-          n.cx >= rect.x0 && n.cx <= rect.x1 && n.cy >= rect.y0 && n.cy <= rect.y1
-        );
-        const cosmos = isCosmosLod();
-        paintLodYarn(ctx, rect, s, tx, ty, cosmos);
-        if (cosmos) {
-          paintCosmosDots(ctx, visible, s, tx, ty, cssW, cssH);
-        } else if (isCompactLod() || isAtlasLod()) {
-          if (isCompactLod()) paintCompactNotes(ctx, visible, s, tx, ty, cssW, cssH);
-          else paintAtlasLabels(ctx, visible, s, tx, ty, cssW, cssH);
-        } else {
-          // Near LOD: draw stickies as paper chips matching screen size.
-          for (const n of visible) {
-            const x = n.x * s + tx;
-            const y = n.y * s + ty;
-            const w = n.w * s;
-            const h = n.h * s;
-            ctx.fillStyle = 'rgba(28, 16, 6, 0.28)';
-            ctx.fillRect(x + 1.5, y + 2, w, h);
-            ctx.fillStyle = paperForNode(n);
-            ctx.fillRect(x, y, w, h);
-            ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-            ctx.beginPath();
-            ctx.fillStyle = n.pin || '#c62828';
-            ctx.arc(x + w / 2, y + (n.big ? 5.5 : 4.5) * s, Math.max(2, (n.big ? 3.4 : 2.6) * s), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = n.ink || '#2a1a0c';
-            ctx.font = '800 ' + Math.max(8, Math.min(14, h * 0.38)) + 'px ' + lodFontFamily;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(noteFaceLabel(n.name), x + w / 2, y + h * 0.58);
-          }
+        const s = scale;
+        const tx = -bounds.x0 * s;
+        const ty = -bounds.y0 * s;
+        const rect = { x0: bounds.x0, y0: bounds.y0, x1: bounds.x1, y1: bounds.y1 };
+        const visible = NODES;
+
+        // Always draw yarn + sticky chips at export scale (never cosmos dots).
+        paintLodYarn(ctx, rect, s, tx, ty, false);
+        for (const n of visible) {
+          const x = n.x * s + tx;
+          const y = n.y * s + ty;
+          const w = Math.max(10, (n.w || 180) * s);
+          const h = Math.max(8, (n.h || 120) * s);
+          ctx.fillStyle = 'rgba(28, 16, 6, 0.28)';
+          ctx.fillRect(x + 1.5, y + 2, w, h);
+          ctx.fillStyle = paperForNode(n);
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+          ctx.beginPath();
+          ctx.fillStyle = n.pin || '#c62828';
+          ctx.arc(x + w / 2, y + Math.max(3, (n.big ? 5.5 : 4.5) * s), Math.max(2, (n.big ? 3.4 : 2.6) * s), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = n.ink || '#2a1a0c';
+          ctx.font = '800 ' + Math.max(7, Math.min(16, h * 0.36)) + 'px ' + lodFontFamily;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(noteFaceLabel(n.name), x + w / 2, y + h * 0.58);
         }
 
         canvas.toBlob((png) => {
@@ -3334,11 +3352,11 @@ if (typeof document !== 'undefined') {
           }
           const a = document.createElement('a');
           a.href = URL.createObjectURL(png);
-          a.download = 'freese-index-viewport.png';
+          a.download = 'freese-index-board.png';
           document.body.appendChild(a);
           a.click();
           a.remove();
-          showToast(`Exported viewport PNG (${outW}\u00d7${outH}).`);
+          showToast(`Exported board PNG (${outW}\u00d7${outH}, ${NODES.length} notes).`);
         }, 'image/png');
       } catch (_) {
         showToast('PNG export failed.');
@@ -3391,7 +3409,151 @@ if (typeof document !== 'undefined') {
       }
       persistBoard(true);
       freezeWriteCheckpoint(currentSnapshot());
-      showToast('Checkpoint saved on this device — not published.');
+      showToast('Checkpoint saved on this device — not published. Use Publish to public for the live site.');
+    }
+
+    function publishConfig() {
+      const cfg = (typeof window !== 'undefined' && window.FREESE_PUBLISH) || {};
+      return {
+        passphrase: cfg.passphrase || 'traditionology',
+        endpoints: Array.isArray(cfg.endpoints) ? cfg.endpoints.filter(Boolean) : [],
+      };
+    }
+
+    async function uploadBoardHost(snap) {
+      const blob = new Blob([JSON.stringify(snap)], { type: 'application/json' });
+      // 0x0.st anonymous file host (fallback for GitHub issue publish)
+      try {
+        const fd = new FormData();
+        fd.append('file', blob, 'freese-index-board.json');
+        const res = await fetch('https://0x0.st', { method: 'POST', body: fd });
+        if (res.ok) {
+          const url = (await res.text()).trim();
+          if (/^https?:\/\//i.test(url)) return url;
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        const fd = new FormData();
+        fd.append('reqtype', 'fileupload');
+        fd.append('fileToUpload', blob, 'freese-index-board.json');
+        const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
+        if (res.ok) {
+          const url = (await res.text()).trim();
+          if (/^https?:\/\//i.test(url)) return url;
+        }
+      } catch (_) { /* ignore */ }
+      return null;
+    }
+
+    async function publishBoardToPublic() {
+      if (ui.viewOnly) {
+        showToast('View-only — switch to Edit to publish.');
+        return;
+      }
+      const cfg = publishConfig();
+      const ok = window.confirm(
+        'Publish THIS browser board to the live public Freese Index?\n\n' +
+        'Save board only checkpoints this device. Publish updates https://freeze-index.onrender.com/ for everyone.\n\n' +
+        'Passphrase is pre-filled for Traditionology.'
+      );
+      if (!ok) return;
+
+      persistBoard(true);
+      const snap = currentSnapshot();
+      showToast('Publishing to public…');
+
+      let lastErr = '';
+      for (const endpoint of cfg.endpoints) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Freese-Pass': cfg.passphrase,
+            },
+            body: JSON.stringify({ passphrase: cfg.passphrase, board: snap }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data && data.ok) {
+            showToast(`Published ${data.nodes || snap.nodes.length} notes — Render will refresh shortly.`);
+            return;
+          }
+          lastErr = (data && data.error) || (`HTTP ${res.status}`);
+        } catch (e) {
+          lastErr = String(e && e.message ? e.message : e);
+        }
+      }
+
+      // Durable fallback: host JSON + open GitHub issue for the apply-board Action.
+      showToast('Direct publish offline — preparing GitHub issue pack…');
+      const hosted = await uploadBoardHost(snap);
+      downloadSnapshot();
+      const issueTitle = `[freese-publish] ${snap.meta.nodeCount} notes / ${snap.meta.edgeCount} edges`;
+      const issueBody = [
+        'Traditionology public board publish request.',
+        '',
+        hosted ? `BOARD_URL: ${hosted}` : 'BOARD_URL: (attach freese-index-board.json to this issue)',
+        '',
+        `nodes: ${snap.meta.nodeCount}`,
+        `edges: ${snap.meta.edgeCount}`,
+        `savedAt: ${snap.meta.savedAt || ''}`,
+        '',
+        'A GitHub Action will apply this to board-data.js and Render will redeploy.',
+      ].join('\n');
+      const pack = [
+        'FREESE INDEX — PUBLISH PACK',
+        issueTitle,
+        '',
+        issueBody,
+        '',
+        'Open: https://github.com/professorpalmer/freeze/issues/new',
+        'Title must start with [freese-publish]',
+        hosted ? '' : 'Attach the downloaded freese-index-board.json if BOARD_URL is missing.',
+      ].filter(Boolean).join('\n');
+      await copyText(pack);
+      const newIssue = 'https://github.com/professorpalmer/freeze/issues/new?title=' +
+        encodeURIComponent(issueTitle) +
+        '&body=' + encodeURIComponent(issueBody.slice(0, 5500));
+      try { window.open(newIssue, '_blank', 'noopener'); } catch (_) { /* ignore */ }
+      showToast(hosted
+        ? `Publish API unreachable (${lastErr || 'offline'}). Copied pack + opened GitHub issue with BOARD_URL.`
+        : `Publish API unreachable (${lastErr || 'offline'}). Downloaded JSON — attach it on the opened GitHub issue.`);
+    }
+
+    function importBoardJsonFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const snap = JSON.parse(String(reader.result || ''));
+          if (!snap || !Array.isArray(snap.nodes) || snap.nodes.length < 1) {
+            showToast('Import failed — not a Freese board JSON.');
+            return;
+          }
+          freezeWriteLocalBoard(snap);
+          freezeWriteCheckpoint(snap);
+          showToast(`Imported ${snap.nodes.length} notes — reloading…`);
+          location.reload();
+        } catch (_) {
+          showToast('Import failed — invalid JSON.');
+        }
+      };
+      reader.onerror = () => showToast('Import failed — could not read file.');
+      reader.readAsText(file);
+    }
+
+    function startImportBoardJson() {
+      if (ui.viewOnly) {
+        showToast('View-only — switch to Edit to import.');
+        return;
+      }
+      const input = document.getElementById('board-import-input');
+      if (!input) {
+        showToast('Import control missing.');
+        return;
+      }
+      input.value = '';
+      input.click();
     }
 
     function revertToLastSave() {
@@ -3543,6 +3705,14 @@ if (typeof document !== 'undefined') {
             saveBoardCheckpoint();
             return;
           }
+          if (action === 'publish') {
+            await publishBoardToPublic();
+            return;
+          }
+          if (action === 'import') {
+            startImportBoardJson();
+            return;
+          }
           if (action === 'revert') {
             revertToLastSave();
             return;
@@ -3578,6 +3748,14 @@ if (typeof document !== 'undefined') {
         } catch (_) {
           showToast('Local action failed in this browser.');
         }
+      });
+    }
+
+    const importInput = document.getElementById('board-import-input');
+    if (importInput) {
+      importInput.addEventListener('change', () => {
+        const file = importInput.files && importInput.files[0];
+        if (file) importBoardJsonFile(file);
       });
     }
 

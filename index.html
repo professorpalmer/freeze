@@ -230,21 +230,30 @@
 
     <!-- ============ BOTTOM ACTION CLUSTER ============ -->
     <footer class="actionbar">
-      <span class="actionbar-note">Edits stay in this browser · Share view-only = public board · Save = checkpoint only (not published)</span>
+      <span class="actionbar-note">Save = this device only · Publish = public site · Share view-only = public board</span>
       <div class="actions" role="group" aria-label="Board actions">
         <button class="btn act" type="button" data-action="discussion" aria-label="Open discussion, 0 comments">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H8.4L4.6 14v-2.1H3a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.6" cy="7.7" r=".9" fill="currentColor"/><circle cx="8" cy="7.7" r=".9" fill="currentColor"/><circle cx="10.4" cy="7.7" r=".9" fill="currentColor"/></svg>
           <span>Open discussion <span class="count">(0 comments)</span></span>
         </button>
-        <button class="btn act" type="button" data-action="save" aria-label="Save board checkpoint" title="Bookmark this board as a checkpoint on this device — does not publish or download">
+        <button class="btn act" type="button" data-action="save" aria-label="Save board checkpoint" title="Bookmark this board as a checkpoint on this device — does not publish">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 3h7.2a1 1 0 0 1 1 1v9.2L8 10.8l-4.6 2.4V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           <span>Save board</span>
         </button>
+        <button class="btn act editor-only" type="button" data-action="publish" aria-label="Publish board to public site" title="Push this browser board to the live public Freese Index (Render)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 11.5 8 3.5l5 8H3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 7v5.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Publish to public</span>
+        </button>
+        <button class="btn act editor-only" type="button" data-action="import" aria-label="Import board JSON" title="Load a freese-index-board.json into this browser">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M5.6 8.2 8 10.6l2.4-2.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 12.5h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Import JSON</span>
+        </button>
+        <input id="board-import-input" type="file" accept="application/json,.json" hidden />
         <button class="btn act" type="button" data-action="revert" aria-label="Revert to last save" title="Discard unsaved edits and restore the last Save board checkpoint (or the public board if you never saved)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 7.2A4.8 4.8 0 1 1 8 12.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.2 3.6v3.6H7.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Revert to last save</span>
         </button>
-        <button class="btn act" type="button" data-action="export-png" aria-label="Export viewport PNG" title="Rasterize what is on screen">
+        <button class="btn act" type="button" data-action="export-png" aria-label="Export board PNG" title="Export a readable PNG of the sticky-note cluster (not empty cork)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 12.5 7.2 9.8l1.6 1.5L12 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Export PNG</span>
         </button>
@@ -264,6 +273,7 @@
   <ul class="sr-only node-index" id="node-index" aria-label="Graph subjects"></ul>
 
   <script src="board-data.js"></script>
+  <script src="publish-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,63 @@
+name: Apply incoming Freese board
+on:
+  push:
+    paths:
+      - 'incoming/board.json'
+  workflow_dispatch:
+    inputs:
+      board_url:
+        description: 'HTTPS URL of a Freese board JSON snapshot'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: freese-board-publish
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch board from URL (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.board_url != '' }}
+        env:
+          BOARD_URL: ${{ inputs.board_url }}
+        run: |
+          mkdir -p incoming
+          curl -fsSL "$BOARD_URL" -o incoming/board.json
+          python3 - <<'PY'
+          import json
+          board=json.load(open('incoming/board.json'))
+          nodes=board.get('nodes') or []
+          assert len(nodes) >= 100, 'too few nodes'
+          assert any(str(n.get('name','')).lower()=='josh freese' or str(n.get('name','')).lower().startswith('josh freese') for n in nodes), 'missing Josh'
+          print('ok', len(nodes), 'nodes', len(board.get('edges') or []), 'edges')
+          PY
+
+      - name: Apply board JSON
+        run: |
+          if [[ ! -s incoming/board.json ]]; then
+            echo "No incoming/board.json — skip"
+            exit 0
+          fi
+          node scripts/apply-board-json.cjs incoming/board.json
+
+      - name: Commit board-data.js
+        run: |
+          git config user.name "freese-publish-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add board-data.js
+          if git diff --cached --quiet; then
+            echo "No board-data.js changes"
+            exit 0
+          fi
+          git commit -m "publish: apply Traditionology board to board-data.js"
+          git push
