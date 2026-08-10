@@ -649,8 +649,7 @@ body.has-active .strings-tier-core { opacity: 0.38; }
   transition: opacity 0.12s ease;
 }
 body.lod-far .lod-canvas { opacity: 1; }
-/* Far zoom: canvas owns dots + names + yarn. Never stack SVG chips under screen-space labels
-   (that "names floating off stickies" weirdness between zoom bands). */
+/* Far zoom: canvas owns the view (compact mini-notes → atlas labels → cosmos dots). */
 body.lod-far .node {
   visibility: hidden;
 }
@@ -670,6 +669,7 @@ body.lod-far:not(.has-active) .strings-active,
 body.lod-far:not(.has-active) .strings-path {
   opacity: 0;
 }
+body.lod-compact .lod-canvas { opacity: 1; }
 /* Off-viewport notes stay mounted but skipped by the compositor */
 .node.is-culled {
   display: none;

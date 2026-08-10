@@ -507,9 +507,13 @@ const OPEN_BOARD_MARGIN = 16000;
 /** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
 const ZOOM_MIN = 0.0008;
 const ZOOM_MAX = 8;
-const LOD_FAR_SCALE = 0.55;   // canvas names + yarn (stickies hide)
-const LOD_COSMOS_SCALE = 0.18; // dots + hub names only — kills the 10% name-soup blob
+const LOD_FAR_SCALE = 0.55;   // desktop: SVG hides; canvas owns
+const LOD_COSMOS_SCALE = 0.18; // constellation dots + hub names
 const LOD_LABEL_MIN_SEP = 26; // screen px — refuse overlapping far-zoom labels
+/** Mobile compact band: mini stickies grow from ~34% → ~80% before full SVG notes. */
+const LOD_MOBILE_SVG_HIDE = 0.80;
+const LOD_MOBILE_COMPACT_FLOOR = 0.34;
+const LOD_MOBILE_COSMOS = 0.16;
 
 /** Grow cork so content has open margin on every side (room to pin more notes). */
 function freezeEnsureOpenBoardMargin(nodes, world, marginPx) {
@@ -933,8 +937,10 @@ if (typeof document !== 'undefined') {
       window.matchMedia('(max-width: 720px)').matches ||
       window.matchMedia('(pointer: coarse)').matches
     ));
-    const FAR_SCALE = MOBILE_LIGHT ? 0.72 : LOD_FAR_SCALE;
-    const COSMOS_SCALE = MOBILE_LIGHT ? 0.24 : LOD_COSMOS_SCALE;
+    // Ladder: near (SVG) → compact mini-notes → atlas labels → cosmos dots.
+    const FAR_SCALE = MOBILE_LIGHT ? LOD_MOBILE_SVG_HIDE : LOD_FAR_SCALE;
+    const COMPACT_FLOOR = MOBILE_LIGHT ? LOD_MOBILE_COMPACT_FLOOR : 0.30;
+    const COSMOS_SCALE = MOBILE_LIGHT ? LOD_MOBILE_COSMOS : LOD_COSMOS_SCALE;
     const LOD_DPR_CAP = MOBILE_LIGHT ? 1 : 2;
 
     /* ---------- spatial index + viewport (keeps ~500 notes feeling light) ---------- */
@@ -950,6 +956,7 @@ if (typeof document !== 'undefined') {
     let frameNeeds = { transform: false, cull: false, edges: false, labels: false, lodPaint: false };
     let lastViewport = null;
     let lodFarOn = false;
+    let lodCompactOn = false;
     let lodCosmosOn = false;
     let lodFontFamily = '';
     let cosmosPersistDirty = false;
@@ -1034,8 +1041,16 @@ if (typeof document !== 'undefined') {
       return view.scale < FAR_SCALE;
     }
 
+    function isCompactLod() {
+      return isFarLod() && view.scale >= COMPACT_FLOOR;
+    }
+
     function isCosmosLod() {
       return view.scale < COSMOS_SCALE;
+    }
+
+    function isAtlasLod() {
+      return isFarLod() && !isCompactLod() && !isCosmosLod();
     }
 
     function formatZoomLabel(scale) {
@@ -1066,92 +1081,76 @@ if (typeof document !== 'undefined') {
       return true;
     }
 
-    function paintLodCanvas(rect) {
-      if (!ensureLodCanvasSize()) return;
-      const ctx = lodCtx;
-      const w = lodCanvasCssW;
-      const h = lodCanvasCssH;
-      ctx.clearRect(0, 0, w, h);
-
-      const s = view.scale;
-      const tx = view.tx;
-      const ty = view.ty;
-      const cosmos = s < COSMOS_SCALE;
+    function paintLodYarn(ctx, rect, s, tx, ty, cosmos) {
       const dimmed = ui.dim && !ui.active;
-      // Deep cosmos: dots only — yarn becomes noise and burns fill rate.
-      // Phones: skip related yarn whenever far — 770 strokes thrash mobile GPUs.
       const paintYarn = !cosmos || s >= 0.025;
-      const paintRelated = paintYarn && !MOBILE_LIGHT;
-
-      if (paintYarn) {
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        const tiers = cosmos
-          ? [
-              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.36)', width: 1.9 },
-              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.5)', width: 2.15 },
-            ]
-          : [
-              ...(paintRelated
-                ? [{ list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.1)' : 'rgba(179, 58, 50, 0.48)', width: 2.05 }]
-                : []),
-              { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.58)', width: 2.25 },
-              { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.7)', width: 2.45 },
-            ];
-        for (const style of tiers) {
-          ctx.beginPath();
-          ctx.strokeStyle = style.stroke;
-          ctx.lineWidth = style.width;
-          let any = false;
-          for (const e of style.list) {
-            const a = byId.get(e.from), b = byId.get(e.to);
-            if (!a || !b) continue;
-            if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
-            ctx.moveTo(a.cx * s + tx, a.cy * s + ty);
-            ctx.lineTo(b.cx * s + tx, b.cy * s + ty);
-            any = true;
-          }
-          if (any) ctx.stroke();
+      if (!paintYarn) return;
+      const paintRelated = !MOBILE_LIGHT && !cosmos;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      const tiers = cosmos
+        ? [
+            { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.1)' : 'rgba(198, 40, 40, 0.36)', width: 1.9 },
+            { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.5)', width: 2.15 },
+          ]
+        : [
+            ...(paintRelated
+              ? [{ list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.1)' : 'rgba(179, 58, 50, 0.48)', width: 2.05 }]
+              : []),
+            { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.58)', width: 2.25 },
+            { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.7)', width: 2.45 },
+          ];
+      for (const style of tiers) {
+        ctx.beginPath();
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = style.width;
+        let any = false;
+        for (const e of style.list) {
+          const a = byId.get(e.from), b = byId.get(e.to);
+          if (!a || !b) continue;
+          if (!segmentHitsRect(a.cx, a.cy, b.cx, b.cy, rect)) continue;
+          ctx.moveTo(a.cx * s + tx, a.cy * s + ty);
+          ctx.lineTo(b.cx * s + tx, b.cy * s + ty);
+          any = true;
         }
+        if (any) ctx.stroke();
       }
+    }
 
-      const visible = nodesTouchingRect(rect);
-      if (!lodFontFamily) {
-        lodFontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
-          || 'Georgia, "Times New Roman", serif';
-      }
-
-      // Pin dots under everything — stays readable when names cull out.
+    function paintCosmosDots(ctx, visible, s, tx, ty, w, h) {
       for (const n of visible) {
         const sx = n.cx * s + tx;
         const sy = n.cy * s + ty;
         if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
-        const r = n.big ? (cosmos ? 3 : 2.4) : (cosmos ? (s > 0.08 ? 2 : 1) : 1.6);
+        const r = n.big ? 3 : (s > 0.08 ? 2 : 1);
         ctx.fillStyle = n.pin || n.color || '#c62828';
         ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
       }
-
-      if (cosmos) {
-        stickyFarLabelIds.clear();
-        // Hub / selection names only — never stamp every note at globe zoom.
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.font = '600 11px ' + lodFontFamily;
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
-        for (const n of visible) {
-          if (!n.big && n.id !== ui.selected) continue;
-          const sx = Math.round(n.cx * s + tx);
-          const sy = Math.round(n.cy * s + ty + 5);
-          if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
-          ctx.strokeText(n.name, sx, sy);
-          ctx.fillStyle = n.ink || '#2a1a0c';
-          ctx.fillText(n.name, sx, sy);
-        }
-        return;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.font = '600 11px ' + lodFontFamily;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
+      for (const n of visible) {
+        if (!n.big && n.id !== ui.selected) continue;
+        const sx = Math.round(n.cx * s + tx);
+        const sy = Math.round(n.cy * s + ty + 5);
+        if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
+        ctx.strokeText(n.name, sx, sy);
+        ctx.fillStyle = n.ink || '#2a1a0c';
+        ctx.fillText(n.name, sx, sy);
       }
+    }
 
-      // Far zoom: stable collision labels — keep prior winners while panning so names don't "dance".
+    function paintAtlasLabels(ctx, visible, s, tx, ty, w, h) {
+      for (const n of visible) {
+        const sx = n.cx * s + tx;
+        const sy = n.cy * s + ty;
+        if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
+        const r = n.big ? 2.4 : 1.6;
+        ctx.fillStyle = n.pin || n.color || '#c62828';
+        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+      }
       const panning = drag.mode === 'pan' || drag.mode === 'node';
       const labelCandidates = visible.slice().sort((a, b) => {
         const aPri =
@@ -1180,18 +1179,16 @@ if (typeof document !== 'undefined') {
         occupied.add(gx + ',' + gy);
         return true;
       };
-
       const nextSticky = new Set();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '600 11px ' + lodFontFamily;
       for (const n of labelCandidates) {
         const sx = Math.round(n.cx * s + tx);
-        const sy = Math.round((n.cy + (n.big ? 4 : 2)) * s + ty);
+        const sy = Math.round(n.cy * s + ty);
         if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
         const force = n.id === ui.selected || n.big;
         const wasSticky = stickyFarLabelIds.has(n.id);
-        // While dragging the camera, don't crown new labels — only keep sticky / hubs.
         if (panning && !wasSticky && !force) continue;
         if (!canPlace(sx, sy, force)) continue;
         nextSticky.add(n.id);
@@ -1200,14 +1197,130 @@ if (typeof document !== 'undefined') {
         ctx.strokeText(n.name, sx, sy);
         ctx.fillStyle = n.ink || '#2a1a0c';
         ctx.fillText(n.name, sx, sy);
-        if (n.big && n.role && s > 0.32) {
-          ctx.font = '500 9px ' + lodFontFamily;
-          ctx.strokeText(n.role, sx, sy + 12);
-          ctx.fillText(n.role, sx, sy + 12);
-          ctx.font = '600 11px ' + lodFontFamily;
+      }
+      stickyFarLabelIds = nextSticky;
+    }
+
+    function paintCompactNotes(ctx, visible, s, tx, ty, w, h) {
+      const span = Math.max(0.01, FAR_SCALE - COMPACT_FLOOR);
+      const t = Math.max(0, Math.min(1, (s - COMPACT_FLOOR) / span));
+      const noteW = 28 + t * (MOBILE_LIGHT ? 78 : 88);
+      const noteH = 16 + t * (MOBILE_LIGHT ? 34 : 40);
+      const fontPx = Math.max(7, Math.round(7.5 + t * 5.5));
+      const pinR = 1.4 + t * 2.2;
+      const showText = noteW >= 36;
+      const panning = drag.mode === 'pan' || drag.mode === 'node';
+      const sep = Math.max(14, Math.round(noteW * 0.55));
+
+      const candidates = visible.slice().sort((a, b) => {
+        const aPri =
+          (stickyFarLabelIds.has(a.id) ? 8 : 0) +
+          (a.id === ui.selected ? 5 : 0) +
+          (a.big ? 2 : 0);
+        const bPri =
+          (stickyFarLabelIds.has(b.id) ? 8 : 0) +
+          (b.id === ui.selected ? 5 : 0) +
+          (b.big ? 2 : 0);
+        if (bPri !== aPri) return bPri - aPri;
+        return stableIdRank(a.id) - stableIdRank(b.id);
+      });
+
+      const occupied = new Set();
+      const canPlace = (sx, sy, force) => {
+        const gx = Math.floor(sx / sep);
+        const gy = Math.floor(sy / sep);
+        if (!force) {
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              if (occupied.has((gx + dx) + ',' + (gy + dy))) return false;
+            }
+          }
+        }
+        occupied.add(gx + ',' + gy);
+        return true;
+      };
+
+      const nextSticky = new Set();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '600 ' + fontPx + 'px ' + lodFontFamily;
+
+      for (const n of candidates) {
+        const sx = Math.round(n.cx * s + tx);
+        const sy = Math.round(n.cy * s + ty);
+        if (sx < -noteW || sy < -noteH || sx > w + noteW || sy > h + noteH) continue;
+        const force = n.id === ui.selected || n.big;
+        const wasSticky = stickyFarLabelIds.has(n.id);
+        if (panning && !wasSticky && !force) continue;
+        if (!canPlace(sx, sy, force)) continue;
+        nextSticky.add(n.id);
+
+        const hw = (n.big ? noteW * 1.12 : noteW) / 2;
+        const hh = (n.big ? noteH * 1.1 : noteH) / 2;
+        const x0 = sx - hw;
+        const y0 = sy - hh;
+        const paper = n.paper || n.color || '#f7f1e1';
+        const ink = n.ink || '#2a1a0c';
+        const pin = n.pin || '#c62828';
+
+        ctx.fillStyle = 'rgba(28, 16, 6, 0.28)';
+        ctx.fillRect(x0 + 1.5, y0 + 2, hw * 2, hh * 2);
+        ctx.fillStyle = paper;
+        ctx.fillRect(x0, y0, hw * 2, hh * 2);
+        ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 0.5, y0 + 0.5, hw * 2 - 1, hh * 2 - 1);
+
+        ctx.beginPath();
+        ctx.fillStyle = pin;
+        ctx.arc(sx, y0 + pinR + 1.5, pinR, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (showText) {
+          const maxChars = Math.max(4, Math.floor(hw * 2 / (fontPx * 0.58)));
+          let label = n.name || '';
+          if (label.length > maxChars) label = label.slice(0, Math.max(3, maxChars - 1)) + '\u2026';
+          ctx.lineWidth = Math.max(2, fontPx * 0.28);
+          ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
+          ctx.strokeText(label, sx, sy + pinR * 0.35);
+          ctx.fillStyle = ink;
+          ctx.fillText(label, sx, sy + pinR * 0.35);
         }
       }
       stickyFarLabelIds = nextSticky;
+    }
+
+    function paintLodCanvas(rect) {
+      if (!ensureLodCanvasSize()) return;
+      const ctx = lodCtx;
+      const w = lodCanvasCssW;
+      const h = lodCanvasCssH;
+      ctx.clearRect(0, 0, w, h);
+
+      const s = view.scale;
+      const tx = view.tx;
+      const ty = view.ty;
+      const cosmos = s < COSMOS_SCALE;
+      const compact = !cosmos && s >= COMPACT_FLOOR;
+
+      if (!lodFontFamily) {
+        lodFontFamily = getComputedStyle(document.body).getPropertyValue('--font-note').trim()
+          || 'Georgia, "Times New Roman", serif';
+      }
+
+      paintLodYarn(ctx, rect, s, tx, ty, cosmos);
+      const visible = nodesTouchingRect(rect);
+
+      if (cosmos) {
+        stickyFarLabelIds.clear();
+        paintCosmosDots(ctx, visible, s, tx, ty, w, h);
+        return;
+      }
+      if (compact) {
+        paintCompactNotes(ctx, visible, s, tx, ty, w, h);
+        return;
+      }
+      paintAtlasLabels(ctx, visible, s, tx, ty, w, h);
     }
 
     function applyNodeCulling(rect) {
@@ -1312,10 +1425,15 @@ if (typeof document !== 'undefined') {
         world.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.scale})`);
         zoomPct.textContent = formatZoomLabel(view.scale);
         const far = isFarLod();
+        const compact = isCompactLod();
         const cosmos = isCosmosLod();
         if (far !== lodFarOn) {
           lodFarOn = far;
           document.body.classList.toggle('lod-far', far);
+        }
+        if (compact !== lodCompactOn) {
+          lodCompactOn = compact;
+          document.body.classList.toggle('lod-compact', compact);
         }
         if (cosmos !== lodCosmosOn) {
           lodCosmosOn = cosmos;
