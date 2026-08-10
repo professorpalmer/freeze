@@ -69,8 +69,8 @@
       </defs>
 
       <g id="world">
-        <rect id="board-bg" width="2000" height="1400" fill="url(#cork)"/>
-        <rect width="2000" height="1400" fill="#5c4124" opacity=".18"/>
+        <rect id="board-bg" width="5200" height="4000" fill="url(#cork)"/>
+        <rect id="board-bg-shade" width="5200" height="4000" fill="#5c4124" opacity=".18"/>
         <path id="edges" class="strings strings-tier-related"></path>
         <path id="edges-strong" class="strings strings-tier-strong"></path>
         <path id="edges-core" class="strings strings-tier-core"></path>
@@ -137,6 +137,7 @@
   <!-- Screen-reader-accessible node index (focusing a row selects the node in the graph) -->
   <ul class="sr-only node-index" id="node-index" aria-label="Graph subjects"></ul>
 
+  <script src="board-data.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
