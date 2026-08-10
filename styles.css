@@ -288,8 +288,6 @@ body.view-only [data-action="revert"],
 body.view-only [data-action="copy"] {
   display: none !important;
 }
-  display: none !important;
-}
 .modal-hint {
   margin: 4px 0 8px;
   font: 500 12px/1.35 var(--font-ui);
