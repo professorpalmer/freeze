@@ -1288,10 +1288,10 @@ if (typeof document !== 'undefined') {
           let label = noteFaceLabel(n.name);
           let fontPx = Math.max(4.5, Math.min(n.big ? 9.5 : 8, noteH * 0.4));
           const maxW = Math.max(12, noteW - 6);
-          ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
+          ctx.font = '800 ' + fontPx + 'px ' + lodFontFamily;
           while (fontPx > 4.5 && ctx.measureText(label).width > maxW) {
             fontPx -= 0.5;
-            ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
+            ctx.font = '800 ' + fontPx + 'px ' + lodFontFamily;
           }
           if (ctx.measureText(label).width > maxW) {
             let trimmed = label;
