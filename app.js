@@ -50,7 +50,10 @@ function freezeNodeRole(node) {
 }
 
 function freezeNodeBlurb(node) {
-  return freezeNodeText(node && (node.blurb ?? node.summary ?? node.description ?? node.bio));
+  const raw = freezeNodeText(node && (node.blurb ?? node.summary ?? node.description ?? node.bio));
+  // Import boilerplate mentioned "Traditionology" on ~every note — that poisoned search.
+  if (/^imported from traditionology/i.test(raw)) return '';
+  return raw;
 }
 
 function freezeNodeAffiliation(node) {
@@ -272,23 +275,35 @@ function freezePathSummary(node, model, path) {
 
 function freezeSearchNodes(model, query, limit) {
   const cap = Number.isFinite(limit) ? Math.max(1, limit) : 12;
-  const q = String(query || '').trim().toLowerCase();
+  const q = String(query || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!q) return { total: 0, matches: [], capped: false };
+
   const scored = [];
   model.nodes.forEach((node) => {
+    const name = freezeNodeName(node).toLowerCase();
+    const role = freezeNodeRole(node).toLowerCase();
+    const type = freezeNodeType(node).toLowerCase();
+    const typeKey = freezeNodeTypeKey(node).toLowerCase();
+    const blurb = freezeNodeBlurb(node).toLowerCase();
     const affiliations = freezeConnectedAffiliations(node, model);
-    const haystack = [
-      freezeNodeName(node),
-      freezeNodeRole(node),
-      freezeNodeBlurb(node),
-      freezeNodeType(node),
-      freezeNodeTypeKey(node),
-      affiliations,
-      freezeNodeId(node),
-    ].join(' ').toLowerCase();
-    if (q && !haystack.includes(q)) return;
-    scored.push({ node, affiliations });
+    const affil = String(affiliations || '').toLowerCase();
+
+    let score = 0;
+    if (name === q) score = 500;
+    else if (name.startsWith(q)) score = 400;
+    else if (name.includes(q)) score = 300;
+    else if (role.startsWith(q) || role.includes(` ${q}`)) score = 180;
+    else if (role.includes(q)) score = 140;
+    else if (affil.includes(q)) score = 90;
+    else if (type.includes(q) || typeKey.includes(q)) score = 50;
+    else if (blurb.includes(q)) score = 30;
+    else return;
+
+    if (node.big) score += 20;
+    scored.push({ node, affiliations, score });
   });
-  scored.sort((a, b) => freezeNodeName(a.node).localeCompare(freezeNodeName(b.node)));
+
+  scored.sort((a, b) => b.score - a.score || freezeNodeName(a.node).localeCompare(freezeNodeName(b.node)));
   return {
     total: scored.length,
     matches: scored.slice(0, cap),

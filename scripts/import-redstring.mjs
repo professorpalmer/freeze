@@ -71,7 +71,7 @@ async function main() {
       role: isJosh ? 'Drummer · composer · first-call session player' : 'Subject on the Freese Index board',
       blurb: isJosh
         ? 'American drummer whose career threads through punk, new wave, industrial, and arena rock — the hub of this board.'
-        : `Imported from Traditionology's public RedString Freese Index board (${color} note).`,
+        : '',
       x: Math.round(mapX(n.position.x) * 10) / 10,
       y: Math.round(mapY(n.position.y) * 10) / 10,
       tilt: typeof n.data?.rotation === 'number' ? Math.max(-8, Math.min(8, n.data.rotation)) : undefined,
