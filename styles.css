@@ -397,6 +397,88 @@ body.chrome-collapsed #btn-chrome {
   letter-spacing: 0;
   font-weight: 500;
 }
+.connect-picker {
+  position: relative;
+  margin-top: 6px;
+}
+.connect-picker input {
+  margin: 0;
+  width: 100%;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.connect-suggest {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+  background: #f7f1e1;
+  border: 1px solid var(--kraft-edge);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(40, 24, 10, 0.18);
+}
+.connect-suggest[hidden] { display: none !important; }
+.connect-suggest li {
+  margin: 0;
+  border-radius: 6px;
+}
+.connect-suggest button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 600 13px/1.25 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.connect-suggest button:hover,
+.connect-suggest li.is-active button {
+  background: rgba(198, 40, 40, 0.12);
+}
+.connect-suggest .suggest-role {
+  font: 500 11px/1.2 var(--font-ui);
+  color: var(--ink-soft);
+}
+.connect-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 0;
+}
+.connect-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--kraft-edge);
+  background: #fff8ea;
+  font: 600 12px/1.2 var(--font-ui);
+  color: var(--ink);
+}
+.connect-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font: 700 14px/1 var(--font-ui);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.connect-chip button:hover { color: var(--yarn); }
 .modal-actions {
   display: flex;
   justify-content: flex-end;

@@ -136,8 +136,17 @@
           <textarea id="note-blurb" name="blurb" rows="2" maxlength="600" placeholder="Optional note"></textarea>
         </label>
         <div class="modal-field">
-          <span class="modal-label-row">Links <button type="button" id="note-attach-add" class="btn btn-ghost btn-tiny">Add link</button></span>
-          <p class="modal-hint">Optional URLs (articles, videos, docs). They show as clickable links in the note’s info panel after you pin it — not file uploads.</p>
+          <span class="modal-label-row">Connect yarn to</span>
+          <p class="modal-hint">Search the board — pick Aaron Turner, Greg Lake, a band, whatever’s already pinned. Yarn stretches when you hit Pin note.</p>
+          <div class="connect-picker">
+            <input id="note-connect-input" type="search" autocomplete="off" spellcheck="false" placeholder="Search people, bands, projects…">
+            <ul id="note-connect-suggest" class="connect-suggest" role="listbox" hidden></ul>
+          </div>
+          <div id="note-connect-chips" class="connect-chips" aria-live="polite"></div>
+        </div>
+        <div class="modal-field">
+          <span class="modal-label-row">Web links <button type="button" id="note-attach-add" class="btn btn-ghost btn-tiny">Add URL</button></span>
+          <p class="modal-hint">Optional https links for the info panel — not file uploads.</p>
           <div id="note-attachments" class="attach-list"></div>
         </div>
         <div class="modal-actions">

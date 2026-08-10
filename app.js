@@ -763,6 +763,12 @@ if (typeof document !== 'undefined') {
     const noteModal = document.getElementById('note-modal');
     const noteForm = document.getElementById('note-form');
     const noteAttachments = document.getElementById('note-attachments');
+    const noteConnectInput = document.getElementById('note-connect-input');
+    const noteConnectSuggest = document.getElementById('note-connect-suggest');
+    const noteConnectChips = document.getElementById('note-connect-chips');
+    const pendingConnectIds = new Set();
+    let connectSuggestItems = [];
+    let connectSuggestIndex = -1;
     const modeBtn = document.getElementById('btn-mode');
     const modeLabel = document.getElementById('mode-label');
     const chromeBtn = document.getElementById('btn-chrome');
@@ -1992,7 +1998,7 @@ if (typeof document !== 'undefined') {
       row.className = 'attach-row';
       row.innerHTML =
         `<input type="text" data-attach="label" placeholder="Label" value="${escapeHtml(label || '')}">` +
-        `<input type="url" data-attach="url" placeholder="https://..." value="${escapeHtml(url || '')}">` +
+        `<input type="text" data-attach="url" inputmode="url" placeholder="https://..." value="${escapeHtml(url || '')}">` +
         '<button type="button" class="btn btn-ghost btn-tiny" data-attach="remove">Remove</button>';
       row.querySelector('[data-attach="remove"]').addEventListener('click', () => row.remove());
       noteAttachments.appendChild(row);
@@ -2006,11 +2012,126 @@ if (typeof document !== 'undefined') {
       })).filter((a) => a.label || a.url);
     }
 
+    function normalizeConnectQuery(value) {
+      return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function searchBoardSubjects(query, limit) {
+      const q = normalizeConnectQuery(query);
+      if (!q || q.length < 1) return [];
+      const max = Number.isFinite(limit) ? limit : 8;
+      const scored = [];
+      for (const n of NODES) {
+        if (pendingConnectIds.has(n.id)) continue;
+        const name = normalizeConnectQuery(n.name);
+        if (!name) continue;
+        let score = -1;
+        if (name === q) score = 300;
+        else if (name.startsWith(q)) score = 200;
+        else if (name.includes(q)) score = 100;
+        else {
+          const role = normalizeConnectQuery(n.role);
+          if (role.includes(q)) score = 40;
+        }
+        if (score < 0) continue;
+        if (n.big) score += 15;
+        scored.push({ node: n, score });
+      }
+      scored.sort((a, b) => b.score - a.score || a.node.name.localeCompare(b.node.name));
+      return scored.slice(0, max).map((row) => row.node);
+    }
+
+    function renderConnectChips() {
+      if (!noteConnectChips) return;
+      noteConnectChips.textContent = '';
+      for (const id of pendingConnectIds) {
+        const n = byId.get(id) || NODES.find((node) => node.id === id);
+        if (!n) continue;
+        const chip = document.createElement('span');
+        chip.className = 'connect-chip';
+        chip.dataset.id = id;
+        chip.innerHTML =
+          `<span>${escapeHtml(n.name)}</span>` +
+          '<button type="button" aria-label="Remove connection">&times;</button>';
+        chip.querySelector('button').addEventListener('click', () => {
+          pendingConnectIds.delete(id);
+          renderConnectChips();
+          if (noteConnectInput && noteConnectInput.value.trim()) refreshConnectSuggestions();
+        });
+        noteConnectChips.appendChild(chip);
+      }
+    }
+
+    function hideConnectSuggestions() {
+      connectSuggestItems = [];
+      connectSuggestIndex = -1;
+      if (noteConnectSuggest) {
+        noteConnectSuggest.hidden = true;
+        noteConnectSuggest.textContent = '';
+      }
+    }
+
+    function addPendingConnect(node) {
+      if (!node || !node.id) return;
+      pendingConnectIds.add(node.id);
+      renderConnectChips();
+      if (noteConnectInput) {
+        noteConnectInput.value = '';
+        noteConnectInput.focus();
+      }
+      hideConnectSuggestions();
+    }
+
+    function refreshConnectSuggestions() {
+      if (!noteConnectSuggest || !noteConnectInput) return;
+      const q = noteConnectInput.value;
+      const hits = searchBoardSubjects(q, 8);
+      connectSuggestItems = hits;
+      connectSuggestIndex = hits.length ? 0 : -1;
+      noteConnectSuggest.textContent = '';
+      if (!hits.length) {
+        noteConnectSuggest.hidden = true;
+        return;
+      }
+      for (let i = 0; i < hits.length; i++) {
+        const n = hits[i];
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        if (i === connectSuggestIndex) li.classList.add('is-active');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.innerHTML =
+          `<span>${escapeHtml(n.name)}</span>` +
+          (n.role ? `<span class="suggest-role">${escapeHtml(n.role)}</span>` : '');
+        btn.addEventListener('mousedown', (ev) => {
+          ev.preventDefault(); // keep focus; click would blur before select
+          addPendingConnect(n);
+        });
+        li.appendChild(btn);
+        noteConnectSuggest.appendChild(li);
+      }
+      noteConnectSuggest.hidden = false;
+    }
+
+    function moveConnectSuggest(delta) {
+      if (!connectSuggestItems.length || !noteConnectSuggest) return;
+      connectSuggestIndex = (connectSuggestIndex + delta + connectSuggestItems.length) % connectSuggestItems.length;
+      const items = noteConnectSuggest.querySelectorAll('li');
+      items.forEach((li, i) => li.classList.toggle('is-active', i === connectSuggestIndex));
+      const active = items[connectSuggestIndex];
+      if (active && typeof active.scrollIntoView === 'function') {
+        active.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
     function openNoteModal() {
       if (!ui.editing || !noteModal) return;
       noteForm.reset();
-      noteAttachments.textContent = '';
-      addAttachmentRow('', '');
+      pendingConnectIds.clear();
+      renderConnectChips();
+      hideConnectSuggestions();
+      if (noteAttachments) noteAttachments.textContent = '';
+      // Web links optional — start empty so Connect is the obvious path.
       noteModal.hidden = false;
       document.getElementById('note-name').focus();
     }
@@ -2018,6 +2139,8 @@ if (typeof document !== 'undefined') {
     function closeNoteModal() {
       if (!noteModal) return;
       noteModal.hidden = true;
+      pendingConnectIds.clear();
+      hideConnectSuggestions();
     }
 
     function submitNoteForm(e) {
@@ -2026,7 +2149,14 @@ if (typeof document !== 'undefined') {
       if (!name) return;
       const color = document.getElementById('note-color').value || 'yellow';
       const blurb = document.getElementById('note-blurb').value.trim();
-      const attachments = readAttachmentRows();
+      const attachments = readAttachmentRows().filter((a) => {
+        const url = a.url;
+        return !url || /^https?:\/\//i.test(url) || url.includes('.');
+      }).map((a) => ({
+        label: a.label || a.url,
+        url: a.url,
+      }));
+      const connectIds = [...pendingConnectIds];
       const cx = (-view.tx + svg.clientWidth / 2) / view.scale;
       const cy = (-view.ty + svg.clientHeight / 2) / view.scale;
       const node = {
@@ -2040,12 +2170,36 @@ if (typeof document !== 'undefined') {
         attachments,
       };
       NODES.push(node);
+      const joshId = freezeJoshId();
+      let linked = 0;
+      for (const toId of connectIds) {
+        if (!toId || toId === node.id) continue;
+        const exists = EDGES.some((edge) =>
+          (edge.from === node.id && edge.to === toId) || (edge.from === toId && edge.to === node.id)
+        );
+        if (exists) continue;
+        const other = byId.get(toId) || NODES.find((n) => n.id === toId);
+        const touchesJosh = node.id === joshId || toId === joshId;
+        EDGES.push({
+          id: newId('e'),
+          from: node.id,
+          to: toId,
+          label: other ? `linked to ${other.name}` : 'connected',
+          tier: touchesJosh ? 'core' : 'related',
+          strength: touchesJosh ? 'high' : 'medium',
+        });
+        linked += 1;
+      }
       closeNoteModal();
       expandWorldIfNeeded();
       refreshBoard({ persist: true });
       selectNode(node.id);
       centerNode(node.id);
-      showToast(`Pinned “${name}”.`);
+      showToast(
+        linked
+          ? `Pinned “${name}” with ${linked} yarn link${linked === 1 ? '' : 's'}.`
+          : `Pinned “${name}”.`
+      );
     }
 
     function reorganizeAroundJosh() {
@@ -2284,6 +2438,36 @@ if (typeof document !== 'undefined') {
     if (noteCancel) noteCancel.addEventListener('click', closeNoteModal);
     const noteAttachAdd = document.getElementById('note-attach-add');
     if (noteAttachAdd) noteAttachAdd.addEventListener('click', () => addAttachmentRow('', ''));
+    if (noteConnectInput) {
+      noteConnectInput.addEventListener('input', refreshConnectSuggestions);
+      noteConnectInput.addEventListener('focus', refreshConnectSuggestions);
+      noteConnectInput.addEventListener('blur', () => {
+        // Delay so mousedown on a suggestion can fire first.
+        setTimeout(hideConnectSuggestions, 120);
+      });
+      noteConnectInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          if (noteConnectSuggest && noteConnectSuggest.hidden) refreshConnectSuggestions();
+          else moveConnectSuggest(1);
+          return;
+        }
+        if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          moveConnectSuggest(-1);
+          return;
+        }
+        if (ev.key === 'Enter') {
+          if (!noteConnectSuggest || noteConnectSuggest.hidden || connectSuggestIndex < 0) return;
+          ev.preventDefault();
+          addPendingConnect(connectSuggestItems[connectSuggestIndex]);
+          return;
+        }
+        if (ev.key === 'Escape') {
+          hideConnectSuggestions();
+        }
+      });
+    }
     if (noteModal) {
       noteModal.addEventListener('click', (ev) => {
         if (ev.target === noteModal) closeNoteModal();
