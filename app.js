@@ -341,8 +341,8 @@ function freezeNodeCoordinates(node, element) {
   return { x: Number(x), y: Number(y) };
 }
 
-function freezeBoardSnapshot(model, selected, path) {
-  return {
+function freezeBoardSnapshot(model, selected, path, camera) {
+  const snap = {
     meta: {
       title: 'Freese Index',
       kind: 'local-board-snapshot',
@@ -394,10 +394,61 @@ function freezeBoardSnapshot(model, selected, path) {
         }
       : null,
   };
+  const cam = freezeNormalizeCamera(camera);
+  if (cam) snap.view = cam;
+  return snap;
 }
 
 const FREESE_STORAGE_KEY = 'freese-index-board-v1';
 const FREESE_CHECKPOINT_KEY = 'freese-index-board-checkpoint-v1';
+const FREESE_CAMERA_KEY = 'freese-index-camera-v1';
+
+/** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
+const ZOOM_MIN = 0.0008;
+const ZOOM_MAX = 8;
+
+function freezeNormalizeCamera(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const scale = Number(raw.scale);
+  const tx = Number(raw.tx);
+  const ty = Number(raw.ty);
+  if (!Number.isFinite(scale) || scale < ZOOM_MIN || scale > ZOOM_MAX) return null;
+  if (!Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+  return { tx, ty, scale };
+}
+
+function freezeReadCamera() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(FREESE_CAMERA_KEY);
+    if (raw) {
+      const cam = freezeNormalizeCamera(JSON.parse(raw));
+      if (cam) return cam;
+    }
+  } catch (_) { /* ignore */ }
+  try {
+    const board = freezeReadLocalBoard();
+    if (board && board.view) return freezeNormalizeCamera(board.view);
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+function freezeWriteCamera(camera) {
+  if (typeof localStorage === 'undefined') return false;
+  const cam = freezeNormalizeCamera(camera);
+  if (!cam) return false;
+  try {
+    localStorage.setItem(FREESE_CAMERA_KEY, JSON.stringify({
+      tx: cam.tx,
+      ty: cam.ty,
+      scale: cam.scale,
+      savedAt: new Date().toISOString(),
+    }));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 function freezeReadLocalBoard() {
   if (typeof localStorage === 'undefined') return null;
@@ -504,9 +555,6 @@ function freezeLocalShareUrl(selectedId, opts) {
 
 /** Empty cork around the note cluster — room to pin without hitting the edge. */
 const OPEN_BOARD_MARGIN = 16000;
-/** Deep zoom like a map globe — keep scrolling out past the cluster into cork void. */
-const ZOOM_MIN = 0.0008;
-const ZOOM_MAX = 8;
 const LOD_FAR_SCALE = 0.55;   // desktop: SVG hides; canvas owns
 const LOD_COSMOS_SCALE = 0.18; // constellation dots + hub names
 const LOD_LABEL_MIN_SEP = 26; // screen px — refuse overlapping far-zoom labels
@@ -822,6 +870,7 @@ if (typeof document !== 'undefined') {
     const pointers = new Map(); // pointerId -> {x,y}
     let pinch = null;           // {dist, mx, my}
     let persistTimer = null;
+    let cameraTimer = null;
 
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const NODE_DRAW_ORDER = { subject: 0, project: 1, band: 2, person: 3, pink: 4, yellow: 5, green: 6, blue: 7 };
@@ -838,11 +887,32 @@ if (typeof document !== 'undefined') {
       return prefix + '-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
     }
 
+    function cameraSnapshot() {
+      return { tx: view.tx, ty: view.ty, scale: view.scale };
+    }
+
+    function persistCamera(immediate) {
+      const write = () => freezeWriteCamera(cameraSnapshot());
+      if (immediate) {
+        clearTimeout(cameraTimer);
+        write();
+        return;
+      }
+      clearTimeout(cameraTimer);
+      cameraTimer = setTimeout(write, 220);
+    }
+
     function persistBoard(immediate) {
       if (ui.viewOnly) return;
       const write = () => {
-        const snap = freezeBoardSnapshot(graphModel, ui.selected ? byId.get(ui.selected) : null, ui.path);
+        const snap = freezeBoardSnapshot(
+          graphModel,
+          ui.selected ? byId.get(ui.selected) : null,
+          ui.path,
+          cameraSnapshot()
+        );
         freezeWriteLocalBoard(snap);
+        freezeWriteCamera(cameraSnapshot());
       };
       if (immediate) {
         clearTimeout(persistTimer);
@@ -1578,6 +1648,7 @@ if (typeof document !== 'undefined') {
       view.tx = (cw - bw * view.scale) / 2 - (minX - pad) * view.scale;
       view.ty = (ch - bh * view.scale) / 2 - (minY - pad) * view.scale;
       applyTransform();
+      persistCamera(false);
       if (announce) showToast('Fitted to notes — zoom out for open cork.');
     }
 
@@ -1659,6 +1730,7 @@ if (typeof document !== 'undefined') {
       view.scale = ns;
       clampPan();
       applyTransform();
+      persistCamera(false);
     }
 
     /* ================= hit testing ================= */
@@ -1983,6 +2055,7 @@ if (typeof document !== 'undefined') {
         }
         drag.mode = null;
         flushCosmosPersist();
+        persistCamera(false);
         scheduleFrame({ transform: true, cull: true, edges: true, labels: true, lodPaint: true });
       }
     }
@@ -2037,6 +2110,7 @@ if (typeof document !== 'undefined') {
       view.fitted = true;
       applyTransform();
       clampPan();
+      persistCamera(false);
     });
 
     /* ================= toggles + editor ================= */
@@ -2650,7 +2724,7 @@ if (typeof document !== 'undefined') {
 
     function currentSnapshot() {
       const selected = ui.selected ? byId.get(ui.selected) : null;
-      return freezeBoardSnapshot(graphModel, selected, ui.path);
+      return freezeBoardSnapshot(graphModel, selected, ui.path, cameraSnapshot());
     }
 
     async function copyText(text) {
@@ -2860,6 +2934,7 @@ if (typeof document !== 'undefined') {
       clampPan();
       applyTransform();
       view.fitted = true;
+      persistCamera(false);
     }
 
     function renderBoard() {
@@ -2902,10 +2977,21 @@ if (typeof document !== 'undefined') {
     if (NODES.length <= 60 && !MOBILE_LIGHT) document.body.classList.add('settle-anim');
     buildNodes();
     rebuildNodeIndex();
-    fitView();
+    const savedCamera = freezeReadCamera();
+    if (savedCamera) {
+      view.tx = savedCamera.tx;
+      view.ty = savedCamera.ty;
+      view.scale = savedCamera.scale;
+      view.fitted = true;
+      clampPan();
+      applyTransform();
+    } else {
+      fitView();
+    }
     flushFrame();
     updateReadout(null);
     if (!ui.viewOnly) persistBoard(true); // keep expanded cork size in this browser
+    persistCamera(true);
     showToast(ui.viewOnly
       ? 'View-only board — pan, deep-zoom, and search. Editing is off.'
       : (MOBILE_LIGHT
@@ -2945,8 +3031,13 @@ if (typeof document !== 'undefined') {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         if (!view.fitted) { fitView(); }
-        else { clampPan(); applyTransform(); }
+        else { clampPan(); applyTransform(); persistCamera(false); }
       }, 120);
+    });
+    const flushCamera = () => persistCamera(true);
+    window.addEventListener('pagehide', flushCamera);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushCamera();
     });
   })();
 }
