@@ -723,9 +723,10 @@ function finalizeNodes() {
   const byId = new Map();
   for (const n of NODES) {
     const type = TYPES[n.type] || TYPES.person;
-    // Tighter chips; width tracks Arial Black caps (wide glyphs).
-    n.h = n.big ? 44 : 30;
-    n.w = Math.max(58, 12 + n.name.length * 7.6 + (n.big ? 8 : 0));
+    // Chip width from label length — never stretch glyphs to fill the box.
+    const label = noteFaceLabel(n.name);
+    n.h = n.big ? 40 : 28;
+    n.w = Math.max(32, Math.ceil(14 + label.length * 6.8 + (n.big ? 10 : 0)));
     n.cx = n.x + n.w / 2;
     n.cy = n.y + n.h / 2;
     n.color = type.color;
@@ -1527,18 +1528,16 @@ if (typeof document !== 'undefined') {
         const pin = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         pin.setAttribute('class', 'pin');
         pin.setAttribute('cx', n.w / 2);
-        pin.setAttribute('cy', n.big ? 6 : 5);
-        pin.setAttribute('r', n.big ? 3.6 : 2.8);
+        pin.setAttribute('cy', n.big ? 5.5 : 4.5);
+        pin.setAttribute('r', n.big ? 3.4 : 2.6);
         pin.setAttribute('fill', n.pin);
 
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         lbl.setAttribute('class', 'lbl');
         lbl.setAttribute('x', n.w / 2);
-        lbl.setAttribute('y', n.big ? 24 : 19);
+        lbl.setAttribute('y', n.big ? 23 : 18);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', n.ink);
-        lbl.setAttribute('textLength', String(Math.max(16, n.w - 8)));
-        lbl.setAttribute('lengthAdjust', 'spacingAndGlyphs');
         lbl.textContent = noteFaceLabel(n.name);
 
         note.appendChild(chip);
@@ -1549,11 +1548,9 @@ if (typeof document !== 'undefined') {
           const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           sub.setAttribute('class', 'sub');
           sub.setAttribute('x', n.w / 2);
-          sub.setAttribute('y', 36);
+          sub.setAttribute('y', 34);
           sub.setAttribute('text-anchor', 'middle');
           sub.setAttribute('fill', n.ink);
-          sub.setAttribute('textLength', String(Math.max(16, n.w - 10)));
-          sub.setAttribute('lengthAdjust', 'spacingAndGlyphs');
           sub.textContent = noteFaceLabel(n.role);
           note.appendChild(sub);
         }

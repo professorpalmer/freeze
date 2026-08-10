@@ -26,7 +26,7 @@
   --paper-shadow: rgba(28, 16, 6, 0.48);
   --radius: 3px;
   --font-display: "Impact", "Haettenschweiler", "Arial Narrow Bold", "Franklin Gothic Medium", sans-serif;
-  --font-note: "Arial Black", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-note: Helvetica, "Helvetica Neue", Arial, "Arial Black", sans-serif;
   --font-ui: "Avenir Next Condensed", "Avenir Next", "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --accent: var(--yarn);
@@ -736,9 +736,9 @@ body.settle-anim .node .note {
 .node .lbl {
   fill: var(--ink);
   font-family: var(--font-note);
-  font-size: 7.25px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   pointer-events: none;
 }
 .node .sub {
@@ -799,7 +799,7 @@ body.settle-anim .node .note {
   stroke: rgba(180, 40, 30, 0.45);
 }
 
-.node.big .lbl { font-size: 8.5px; }
+.node.big .lbl { font-size: 9px; }
 .node.big .sub { font-size: 7px; }
 .node.big .chip {
   stroke-width: 1.3;
