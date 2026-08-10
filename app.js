@@ -336,6 +336,8 @@ function freezeBoardSnapshot(model, selected, path) {
       nodeCount: model.nodes.length,
       edgeCount: model.edges.length,
     },
+    joshId: typeof freezeJoshId === 'function' ? freezeJoshId() : null,
+    world: (typeof BOARD_WORLD !== 'undefined' && BOARD_WORLD) || null,
     nodes: model.nodes.map((node) => ({
       id: freezeNodeId(node),
       name: freezeNodeName(node),
@@ -344,6 +346,11 @@ function freezeBoardSnapshot(model, selected, path) {
       blurb: freezeNodeBlurb(node),
       x: node.x,
       y: node.y,
+      tilt: node.tilt,
+      big: node.big || undefined,
+      paper: node.paper,
+      pin: node.pin,
+      attachments: Array.isArray(node.attachments) ? node.attachments : [],
     })),
     edges: model.edges.map((edge) => ({
       id: edge.id,
@@ -371,6 +378,49 @@ function freezeBoardSnapshot(model, selected, path) {
           })),
         }
       : null,
+  };
+}
+
+const FREESE_STORAGE_KEY = 'freese-index-board-v1';
+
+function freezeReadLocalBoard() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(FREESE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.nodes) || !parsed.nodes.length) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function freezeWriteLocalBoard(payload) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(FREESE_STORAGE_KEY, JSON.stringify(payload));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function freezeHydrateBoardPayload(seed) {
+  const local = freezeReadLocalBoard();
+  if (!local) return seed;
+  return {
+    source: {
+      ...(seed && seed.source ? seed.source : {}),
+      local: true,
+      savedAt: local.meta && local.meta.savedAt,
+      nodeCount: local.nodes.length,
+      edgeCount: (local.edges || []).length,
+    },
+    world: local.world || (seed && seed.world) || { w: 2000, h: 1400 },
+    joshId: local.joshId || (seed && seed.joshId) || null,
+    nodes: local.nodes,
+    edges: Array.isArray(local.edges) ? local.edges : [],
   };
 }
 
@@ -444,7 +494,7 @@ function freezeBuildSearchPanel(model, activate) {
     freezeClearElement(results);
     const query = String(input.value || '').trim();
     if (!query) {
-      count.textContent = `${model.nodes.length} subjects on the board`;
+      count.textContent = `${(typeof NODES !== 'undefined' && Array.isArray(NODES) ? NODES.length : model.nodes.length)} subjects on the board`;
       results.setAttribute('aria-label', count.textContent);
       const empty = document.createElement('li');
       empty.className = 'freeze-search-empty';
@@ -453,7 +503,10 @@ function freezeBuildSearchPanel(model, activate) {
       return;
     }
 
-    const found = freezeSearchNodes(model, query, 12);
+    const liveModel = (typeof NODES !== 'undefined' && Array.isArray(NODES))
+      ? freezeGraphModel(NODES, EDGES)
+      : model;
+    const found = freezeSearchNodes(liveModel, query, 12);
     if (!found.total) {
       count.textContent = 'No matches';
     } else if (found.capped) {
@@ -518,10 +571,10 @@ const TYPES = {
   subject: { color: '#ffe0e6', paper: '#ffe0e6', ink: '#3a1820', pin: '#c62828', label: 'Board subject' },
 };
 
-const BOARD = freezeBoardPayload();
-const NODES = Array.isArray(BOARD.nodes) ? BOARD.nodes : [];
-const EDGES = Array.isArray(BOARD.edges) ? BOARD.edges : [];
-const BOARD_WORLD = (BOARD.world && BOARD.world.w && BOARD.world.h)
+const BOARD = freezeHydrateBoardPayload(freezeBoardPayload());
+let NODES = Array.isArray(BOARD.nodes) ? BOARD.nodes.slice() : [];
+let EDGES = Array.isArray(BOARD.edges) ? BOARD.edges.slice() : [];
+let BOARD_WORLD = (BOARD.world && BOARD.world.w && BOARD.world.h)
   ? { w: BOARD.world.w, h: BOARD.world.h }
   : { w: 2000, h: 1400 };
 
@@ -572,8 +625,8 @@ function finalizeNodes() {
 
 if (typeof document !== 'undefined') {
   (function main() {
-    const byId = finalizeNodes();
-    const graphModel = freezeGraphModel(NODES, EDGES);
+    let byId = finalizeNodes();
+    let graphModel = freezeGraphModel(NODES, EDGES);
     const WORLD = { w: BOARD_WORLD.w, h: BOARD_WORLD.h };
 
     const svg = document.getElementById('graph');
@@ -598,16 +651,86 @@ if (typeof document !== 'undefined') {
     const readout = document.getElementById('readout');
     const toast = document.getElementById('toast');
     const zoomPct = document.getElementById('zoom-pct');
+    const noteModal = document.getElementById('note-modal');
+    const noteForm = document.getElementById('note-form');
+    const noteAttachments = document.getElementById('note-attachments');
+    const modeBtn = document.getElementById('btn-mode');
+    const modeLabel = document.getElementById('mode-label');
+    const chromeBtn = document.getElementById('btn-chrome');
 
     /* ----- view state ----- */
     const view = { tx: 0, ty: 0, scale: 1, fitted: false };
-    const ui = { dim: false, interactive: false, selected: null, hovered: null, active: null, path: null };
+    const ui = {
+      dim: false,
+      interactive: false,
+      editing: false,
+      chromeVisible: true,
+      selected: null,
+      hovered: null,
+      active: null,
+      path: null,
+      linkFrom: null,
+    };
     const drag = { mode: null, id: null, sx: 0, sy: 0, nx: 0, ny: 0, moved: false };
     const pointers = new Map(); // pointerId -> {x,y}
     let pinch = null;           // {dist, mx, my}
+    let persistTimer = null;
 
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const NODE_DRAW_ORDER = { subject: 0, project: 1, band: 2, person: 3, pink: 4, yellow: 5, green: 6, blue: 7 };
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function newId(prefix) {
+      return prefix + '-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+    }
+
+    function persistBoard(immediate) {
+      const write = () => {
+        const snap = freezeBoardSnapshot(graphModel, ui.selected ? byId.get(ui.selected) : null, ui.path);
+        freezeWriteLocalBoard(snap);
+      };
+      if (immediate) {
+        clearTimeout(persistTimer);
+        write();
+        return;
+      }
+      clearTimeout(persistTimer);
+      persistTimer = setTimeout(write, 350);
+    }
+
+    function rebuildGraphModel() {
+      byId = finalizeNodes();
+      graphModel = freezeGraphModel(NODES, EDGES);
+    }
+
+    function remountNodes() {
+      nodesG.textContent = '';
+      nodeEls.clear();
+      buildNodes();
+      rebuildNodeIndex();
+    }
+
+    function refreshBoard({ persist = true, fit = false } = {}) {
+      rebuildGraphModel();
+      remountNodes();
+      renderEdges();
+      renderLabels();
+      if (ui.selected && byId.has(ui.selected)) {
+        setPathForNode(ui.selected);
+        updateReadout(ui.selected);
+      } else {
+        clearSelection();
+      }
+      if (fit) fitView(false);
+      if (persist) persistBoard(false);
+    }
 
     /* ================= build the static graph DOM ================= */
 
@@ -922,61 +1045,83 @@ if (typeof document !== 'undefined') {
         const source = BOARD.source;
         const note = source
           ? `${NODES.length} sticky notes \u00b7 ${EDGES.length} yarn strings` +
-            (source.url ? ` \u00b7 snapshot of Traditionology\u2019s public RedString board` : '')
+            (source.local ? ' \u00b7 local edits saved on this device' :
+              (source.url ? ` \u00b7 snapshot of Traditionology\u2019s public RedString board` : ''))
           : `${NODES.length} subjects \u00b7 ${EDGES.length} connections`;
         readout.innerHTML =
           '<p class="ro-kicker">Board status</p>' +
           '<h2>Freese Index</h2>' +
           `<p class="ro-role">${note}</p>` +
-          '<p class="ro-blurb">Cork wall, sticky notes, red yarn \u2014 Traditionology\u2019s Freese Index mania board, imported as a local snapshot. Click any note for the shortest yarn path back to Josh Freese.</p>' +
+          '<p class="ro-blurb">Cork wall, sticky notes, red yarn. Browse freely, or switch to Edit to post notes, yarn, and attachments. Use Panels to hide this chrome and see the board.</p>' +
           '<div class="ro-legend">' +
           `<span><i style="background:${TYPES.pink.color}"></i>Pink</span>` +
           `<span><i style="background:${TYPES.yellow.color}"></i>Yellow</span>` +
           `<span><i style="background:${TYPES.blue.color}"></i>Blue</span>` +
           `<span><i style="background:${TYPES.green.color}"></i>Green</span>` +
           '</div>' +
-          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom \u00b7 click a note for details \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> interact \u00b7 <kbd>Esc</kbd> clear</p>';
+          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom \u00b7 click a note for details \u00b7 <kbd>E</kbd> edit \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> drag notes \u00b7 <kbd>Esc</kbd> clear</p>';
         return;
       }
       const n = byId.get(id);
-      const type = TYPES[n.type];
+      if (!n) { updateReadout(null); return; }
+      const type = TYPES[n.type] || TYPES.yellow;
       const links = neighborButtons(id);
       const connections = connectionLines(id);
       const affiliations = freezeConnectedAffiliations(n, graphModel);
       const counts = n.neighbors.length;
       const pathDetails = freezePathSummary(n, graphModel, ui.path);
+      const attachments = Array.isArray(n.attachments) ? n.attachments.filter((a) => a && (a.url || a.label)) : [];
 
       readout.innerHTML =
         '<p class="ro-kicker">' + (ui.selected === id ? 'Selected subject' : 'Subject') + '</p>' +
-        `<h2>${n.name}</h2>` +
-        `<p class="ro-role">${n.role}</p>` +
-        `<span class="typechip"><i style="background:${type.color}"></i>${type.label}</span>` +
-        `<p class="ro-blurb">${n.blurb}</p>` +
-        (affiliations ? `<p class="ro-affil">Affiliations: ${affiliations}</p>` : '') +
+        `<h2>${escapeHtml(n.name)}</h2>` +
+        `<p class="ro-role">${escapeHtml(n.role || '')}</p>` +
+        `<span class="typechip"><i style="background:${type.color}"></i>${escapeHtml(type.label)}</span>` +
+        `<p class="ro-blurb">${escapeHtml(n.blurb || '')}</p>` +
+        (affiliations ? `<p class="ro-affil">Affiliations: ${escapeHtml(affiliations)}</p>` : '') +
+        (attachments.length
+          ? '<ul class="ro-attachments" aria-label="Attachments">' +
+            attachments.map((a) => {
+              const label = escapeHtml(a.label || a.url || 'Link');
+              const url = String(a.url || '').trim();
+              if (url) return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a></li>`;
+              return `<li>${label}</li>`;
+            }).join('') +
+            '</ul>'
+          : '') +
         '<div class="ro-meta">' +
         `<div class="cell"><b>${counts}</b><span>strings</span></div>` +
         `<div class="cell"><b>${links.length}</b><span>related</span></div>` +
         '</div>' +
         (connections.length
           ? '<ul class="ro-connections" aria-label="Direct connections">' +
-            connections.slice(0, 8).map((c) => `<li>${c.text}</li>`).join('') +
+            connections.slice(0, 8).map((c) => `<li>${escapeHtml(c.text)}</li>`).join('') +
             '</ul>'
           : '') +
         (links.length
           ? '<div class="ro-links" aria-label="Related subjects">' +
-            links.slice(0, 9).map((l) => `<button class="ro-link" type="button" data-go="${l.id}">${l.name}</button>`).join('') +
+            links.slice(0, 9).map((l) => `<button class="ro-link" type="button" data-go="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
             '</div>'
           : '') +
         '<section class="ro-path" data-freeze-path-section="true" aria-label="Path to Josh Freese">' +
         '<p class="ro-path-title">Path to Josh Freese</p>' +
-        `<p class="ro-path-summary">${pathDetails.summary}</p>` +
+        `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
         (pathDetails.hops.length
-          ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${hop}</li>`).join('') + '</ul>'
+          ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
           : '') +
         '</section>' +
-        '<p class="ro-hint">Local mockup detail panel \u2014 nothing is fetched or persisted remotely.</p>';
+        (ui.editing
+          ? '<div class="ro-edit-actions">' +
+            '<button type="button" class="btn" data-edit="link">Link yarn</button>' +
+            '<button type="button" class="btn btn-ghost" data-edit="delete-note">Delete note</button>' +
+            '<button type="button" class="btn btn-ghost" data-edit="clear-yarn">Clear yarn</button>' +
+            '</div>'
+          : '<p class="ro-hint">Local board — edits stay on this device until you Save / Export.</p>');
       for (const b of readout.querySelectorAll('[data-go]')) {
         b.addEventListener('click', () => selectNode(b.getAttribute('data-go')));
+      }
+      for (const b of readout.querySelectorAll('[data-edit]')) {
+        b.addEventListener('click', () => handleEditAction(b.getAttribute('data-edit'), id));
       }
     }
 
@@ -1010,7 +1155,7 @@ if (typeof document !== 'undefined') {
       drag.sx = e.clientX; drag.sy = e.clientY;
       drag.moved = false;
 
-      if (n && ui.interactive && n.id !== 'freese-index') {
+      if (n && (ui.interactive || ui.editing)) {
         drag.mode = 'node'; drag.id = n.id; drag.nx = n.x; drag.ny = n.y;
         nodeEls.get(n.id).classList.add('dragging');
         document.body.classList.add('interactive-drag');
@@ -1072,7 +1217,9 @@ if (typeof document !== 'undefined') {
           ui.hovered = id;
           for (const [nid, g] of nodeEls) g.classList.toggle('hovered', nid === id);
           if (!ui.selected) setActive(id);
-          svg.style.cursor = n ? (ui.interactive ? 'pointer' : 'grab') : 'grab';
+          svg.style.cursor = n
+            ? ((ui.interactive || ui.editing || ui.linkFrom) ? 'pointer' : 'grab')
+            : (ui.linkFrom ? 'crosshair' : 'grab');
         }
       }
     }
@@ -1083,7 +1230,13 @@ if (typeof document !== 'undefined') {
 
       if (drag.mode === 'node' && drag.id) {
         nodeEls.get(drag.id).classList.remove('dragging');
-        if (!drag.moved) selectNode(drag.id);
+        document.body.classList.remove('interactive-drag');
+        if (!drag.moved) {
+          if (ui.linkFrom) completeLink(drag.id);
+          else selectNode(drag.id);
+        } else {
+          persistBoard(false);
+        }
         drag.mode = null; drag.id = null;
         return;
       }
@@ -1092,8 +1245,17 @@ if (typeof document !== 'undefined') {
         const p = worldPoint(e.clientX, e.clientY);
         if (!drag.moved) {
           const n = hitNode(p.x, p.y);
-          if (n) selectNode(n.id);
-          else clearSelection();
+          if (n) {
+            if (ui.linkFrom) completeLink(n.id);
+            else selectNode(n.id);
+          } else {
+            if (ui.linkFrom) {
+              ui.linkFrom = null;
+              document.body.classList.remove('linking');
+              showToast('Yarn link cancelled.');
+            }
+            clearSelection();
+          }
         }
         drag.mode = null;
       }
@@ -1130,7 +1292,20 @@ if (typeof document !== 'undefined') {
         case 'f': case 'F': case '0': fitView(true); break;
         case 'd': case 'D': toggleDim(); break;
         case 'i': case 'I': toggleInteractive(); break;
-        case 'Escape': clearSelection(); break;
+        case 'e': case 'E': toggleEditing(); break;
+        case 'p': case 'P': toggleChrome(); break;
+        case 'a': case 'A': if (ui.editing) openNoteModal(); break;
+        case 'Escape':
+          if (ui.linkFrom) {
+            ui.linkFrom = null;
+            document.body.classList.remove('linking');
+            showToast('Yarn link cancelled.');
+          } else if (noteModal && !noteModal.hidden) {
+            closeNoteModal();
+          } else {
+            clearSelection();
+          }
+          break;
         default: return;
       }
       e.preventDefault();
@@ -1139,20 +1314,329 @@ if (typeof document !== 'undefined') {
       clampPan();
     });
 
-    /* ================= toggles ================= */
+    /* ================= toggles + editor ================= */
+
+    function setEditorChrome(editing) {
+      ui.editing = editing;
+      document.body.classList.toggle('editing', editing);
+      if (modeBtn) modeBtn.setAttribute('aria-pressed', String(editing));
+      if (modeLabel) modeLabel.textContent = editing ? 'Editing' : 'Browse';
+      for (const el of document.querySelectorAll('.editor-only')) {
+        el.hidden = !editing;
+      }
+      if (editing && !ui.interactive) {
+        ui.interactive = true;
+        document.body.classList.add('interactive');
+        const interactBtn = document.getElementById('btn-interact');
+        if (interactBtn) interactBtn.setAttribute('aria-checked', 'true');
+      }
+      updateReadout(ui.selected);
+    }
+
+    function toggleEditing() {
+      setEditorChrome(!ui.editing);
+      showToast(ui.editing ? 'Edit mode — post notes, yarn, and attachments.' : 'Browse mode — board is read-only.');
+    }
+
+    function toggleChrome() {
+      ui.chromeVisible = !ui.chromeVisible;
+      document.body.classList.toggle('chrome-collapsed', !ui.chromeVisible);
+      if (chromeBtn) chromeBtn.setAttribute('aria-checked', String(ui.chromeVisible));
+      showToast(ui.chromeVisible ? 'Panels shown.' : 'Panels hidden — board clear.');
+    }
 
     function toggleDim() {
       ui.dim = !ui.dim;
       document.body.classList.toggle('dim', ui.dim);
       document.getElementById('btn-dim').setAttribute('aria-checked', String(ui.dim));
-      showToast(ui.dim ? 'Strings dimmed.' : 'Strings restored.');
+      showToast(ui.dim ? 'Yarn dimmed.' : 'Yarn restored.');
     }
 
     function toggleInteractive() {
       ui.interactive = !ui.interactive;
       document.body.classList.toggle('interactive', ui.interactive);
       document.getElementById('btn-interact').setAttribute('aria-checked', String(ui.interactive));
-      showToast(ui.interactive ? 'Interactivity on — drag cards to rearrange.' : 'Interactivity off — cards locked in place.');
+      showToast(ui.interactive ? 'Drag notes on.' : 'Drag notes off.');
+    }
+
+    function handleEditAction(action, id) {
+      if (!ui.editing) return;
+      if (action === 'link') {
+        ui.linkFrom = id;
+        document.body.classList.add('linking');
+        showToast('Click another note to stretch yarn.');
+        return;
+      }
+      if (action === 'delete-note') {
+        if (!window.confirm('Delete this sticky note and its yarn?')) return;
+        deleteNote(id);
+        return;
+      }
+      if (action === 'clear-yarn') {
+        clearYarnFor(id);
+      }
+    }
+
+    function completeLink(targetId) {
+      const fromId = ui.linkFrom;
+      ui.linkFrom = null;
+      document.body.classList.remove('linking');
+      if (!fromId || !targetId || fromId === targetId) {
+        showToast('Yarn link cancelled.');
+        return;
+      }
+      const exists = EDGES.some((e) =>
+        (e.from === fromId && e.to === targetId) || (e.from === targetId && e.to === fromId)
+      );
+      if (exists) {
+        showToast('Those notes are already linked.');
+        selectNode(targetId);
+        return;
+      }
+      const label = window.prompt('Yarn label (optional)', 'connected') || 'connected';
+      const joshId = freezeJoshId();
+      const touches = fromId === joshId || targetId === joshId;
+      EDGES.push({
+        id: newId('e'),
+        from: fromId,
+        to: targetId,
+        label: String(label).trim() || 'connected',
+        tier: touches ? 'core' : 'related',
+        strength: touches ? 'high' : 'medium',
+      });
+      refreshBoard({ persist: true });
+      selectNode(targetId);
+      showToast('Yarn posted.');
+    }
+
+    function deleteNote(id) {
+      const joshId = freezeJoshId();
+      if (id === joshId) {
+        showToast('Josh Freese is the hub — cannot delete.');
+        return;
+      }
+      const ni = NODES.findIndex((n) => n.id === id);
+      if (ni < 0) return;
+      NODES.splice(ni, 1);
+      for (let i = EDGES.length - 1; i >= 0; i--) {
+        if (EDGES[i].from === id || EDGES[i].to === id) EDGES.splice(i, 1);
+      }
+      ui.selected = null;
+      refreshBoard({ persist: true });
+      showToast('Note deleted.');
+    }
+
+    function clearYarnFor(id) {
+      let removed = 0;
+      for (let i = EDGES.length - 1; i >= 0; i--) {
+        if (EDGES[i].from === id || EDGES[i].to === id) {
+          EDGES.splice(i, 1);
+          removed += 1;
+        }
+      }
+      refreshBoard({ persist: true });
+      selectNode(id);
+      showToast(removed ? `Cleared ${removed} yarn string${removed === 1 ? '' : 's'}.` : 'No yarn on this note.');
+    }
+
+    function addAttachmentRow(label, url) {
+      if (!noteAttachments) return;
+      const row = document.createElement('div');
+      row.className = 'attach-row';
+      row.innerHTML =
+        `<input type="text" data-attach="label" placeholder="Label" value="${escapeHtml(label || '')}">` +
+        `<input type="url" data-attach="url" placeholder="https://..." value="${escapeHtml(url || '')}">` +
+        '<button type="button" class="btn btn-ghost btn-tiny" data-attach="remove">Remove</button>';
+      row.querySelector('[data-attach="remove"]').addEventListener('click', () => row.remove());
+      noteAttachments.appendChild(row);
+    }
+
+    function readAttachmentRows() {
+      if (!noteAttachments) return [];
+      return [...noteAttachments.querySelectorAll('.attach-row')].map((row) => ({
+        label: row.querySelector('[data-attach="label"]').value.trim(),
+        url: row.querySelector('[data-attach="url"]').value.trim(),
+      })).filter((a) => a.label || a.url);
+    }
+
+    function openNoteModal() {
+      if (!ui.editing || !noteModal) return;
+      noteForm.reset();
+      noteAttachments.textContent = '';
+      addAttachmentRow('', '');
+      noteModal.hidden = false;
+      document.getElementById('note-name').focus();
+    }
+
+    function closeNoteModal() {
+      if (!noteModal) return;
+      noteModal.hidden = true;
+    }
+
+    function submitNoteForm(e) {
+      e.preventDefault();
+      const name = document.getElementById('note-name').value.trim();
+      if (!name) return;
+      const color = document.getElementById('note-color').value || 'yellow';
+      const blurb = document.getElementById('note-blurb').value.trim();
+      const attachments = readAttachmentRows();
+      const cx = (-view.tx + svg.clientWidth / 2) / view.scale;
+      const cy = (-view.ty + svg.clientHeight / 2) / view.scale;
+      const node = {
+        id: newId('n'),
+        type: color,
+        name,
+        role: 'Subject on the Freese Index board',
+        blurb: blurb || 'Posted in edit mode.',
+        x: cx - 70,
+        y: cy - 30,
+        attachments,
+      };
+      NODES.push(node);
+      closeNoteModal();
+      refreshBoard({ persist: true });
+      selectNode(node.id);
+      centerNode(node.id);
+      showToast(`Pinned “${name}”.`);
+    }
+
+    function reorganizeAroundJosh() {
+      const joshId = freezeJoshId();
+      const josh = byId.get(joshId) || NODES.find((n) => /^josh freese$/i.test(n.name));
+      if (!josh) {
+        showToast('Josh Freese not found — cannot reorganize.');
+        return;
+      }
+      showToast('Reorganizing around Josh…');
+      const model = freezeGraphModel(NODES, EDGES);
+      const dist = new Map();
+      const queue = [josh.id];
+      dist.set(josh.id, 0);
+      while (queue.length) {
+        const cur = queue.shift();
+        const d = dist.get(cur);
+        const nbrs = model.adjacency.get(cur) || [];
+        for (const { id: other } of nbrs) {
+          if (dist.has(other)) continue;
+          dist.set(other, d + 1);
+          queue.push(other);
+        }
+      }
+      const rings = new Map();
+      for (const n of NODES) {
+        const d = dist.has(n.id) ? dist.get(n.id) : 99;
+        if (!rings.has(d)) rings.set(d, []);
+        rings.get(d).push(n);
+      }
+      const originX = WORLD.w / 2;
+      const originY = WORLD.h / 2;
+      josh.x = originX - josh.w / 2;
+      josh.y = originY - josh.h / 2;
+      for (const [d, members] of rings) {
+        if (d === 0) continue;
+        const radius = 160 + d * 210;
+        members.sort((a, b) => a.name.localeCompare(b.name));
+        members.forEach((n, i) => {
+          const angle = (Math.PI * 2 * i) / members.length - Math.PI / 2;
+          n.x = originX + Math.cos(angle) * radius - n.w / 2;
+          n.y = originY + Math.sin(angle) * radius - n.h / 2;
+        });
+      }
+      // light separation pass
+      for (let pass = 0; pass < 18; pass++) {
+        for (let i = 0; i < NODES.length; i++) {
+          for (let j = i + 1; j < NODES.length; j++) {
+            const a = NODES[i], b = NODES[j];
+            const dx = (a.x + a.w / 2) - (b.x + b.w / 2);
+            const dy = (a.y + a.h / 2) - (b.y + b.h / 2);
+            const gapX = (a.w + b.w) / 2 + 12;
+            const gapY = (a.h + b.h) / 2 + 12;
+            if (Math.abs(dx) < gapX && Math.abs(dy) < gapY) {
+              const push = 0.35;
+              const sx = dx === 0 ? (Math.random() - 0.5) : Math.sign(dx) * (gapX - Math.abs(dx)) * push;
+              const sy = dy === 0 ? (Math.random() - 0.5) : Math.sign(dy) * (gapY - Math.abs(dy)) * push;
+              if (a.id !== josh.id) { a.x += sx; a.y += sy; }
+              if (b.id !== josh.id) { b.x -= sx; b.y -= sy; }
+            }
+          }
+        }
+      }
+      for (const n of NODES) {
+        n.x = clamp(n.x, 40, WORLD.w - n.w - 40);
+        n.y = clamp(n.y, 40, WORLD.h - n.h - 40);
+      }
+      refreshBoard({ persist: true, fit: true });
+      showToast('Board reorganized around Josh Freese.');
+    }
+
+    function exportBoardPng() {
+      showToast('Rendering PNG…');
+      // Fit export to a safe canvas budget (~4096 max edge) for ~500 notes.
+      const pad = 40;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of NODES) {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + n.w);
+        maxY = Math.max(maxY, n.y + n.h);
+      }
+      if (!Number.isFinite(minX)) {
+        showToast('Nothing to export.');
+        return;
+      }
+      const bw = maxX - minX + pad * 2;
+      const bh = maxY - minY + pad * 2;
+      const maxEdge = 4096;
+      const scale = Math.min(1, maxEdge / Math.max(bw, bh));
+      const outW = Math.max(1, Math.round(bw * scale));
+      const outH = Math.max(1, Math.round(bh * scale));
+
+      const clone = svg.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('width', String(outW));
+      clone.setAttribute('height', String(outH));
+      clone.setAttribute('viewBox', `${minX - pad} ${minY - pad} ${bw} ${bh}`);
+      const worldEl = clone.querySelector('#world');
+      if (worldEl) worldEl.removeAttribute('transform');
+
+      const serializer = new XMLSerializer();
+      const svgText = serializer.serializeToString(clone);
+      const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = outW;
+          canvas.height = outH;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#5c4124';
+          ctx.fillRect(0, 0, outW, outH);
+          ctx.drawImage(img, 0, 0, outW, outH);
+          canvas.toBlob((png) => {
+            URL.revokeObjectURL(url);
+            if (!png) {
+              showToast('PNG export failed in this browser.');
+              return;
+            }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(png);
+            a.download = 'freese-index-board.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            showToast(`Exported PNG (${outW}\u00d7${outH}).`);
+          }, 'image/png');
+        } catch (_) {
+          URL.revokeObjectURL(url);
+          showToast('PNG export failed.');
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        showToast('Could not rasterize the board SVG.');
+      };
+      img.src = url;
     }
 
     /* ================= local board snapshot / actions ================= */
@@ -1181,6 +1665,7 @@ if (typeof document !== 'undefined') {
     }
 
     function downloadSnapshot() {
+      persistBoard(true);
       const payload = JSON.stringify(currentSnapshot(), null, 2);
       const blob = new Blob([payload], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1196,9 +1681,11 @@ if (typeof document !== 'undefined') {
     /* ================= chrome buttons ================= */
 
     document.getElementById('btn-back').addEventListener('click', () => {
-      showToast('Back — this mockup has no history stack (local only).');
+      showToast('Back — this board has no history stack.');
     });
     document.getElementById('btn-dim').addEventListener('click', toggleDim);
+    if (modeBtn) modeBtn.addEventListener('click', toggleEditing);
+    if (chromeBtn) chromeBtn.addEventListener('click', toggleChrome);
     document.getElementById('btn-zoom-in').addEventListener('click', () => {
       zoomAt(svg.clientWidth / 2, svg.clientHeight / 2, 1.3); view.fitted = true;
     });
@@ -1207,6 +1694,22 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('btn-fit').addEventListener('click', () => { fitView(true); view.fitted = true; });
     document.getElementById('btn-interact').addEventListener('click', toggleInteractive);
+    const addBtn = document.getElementById('btn-add-note');
+    if (addBtn) addBtn.addEventListener('click', openNoteModal);
+    const reorgBtn = document.getElementById('btn-reorganize');
+    if (reorgBtn) reorgBtn.addEventListener('click', reorganizeAroundJosh);
+    const pngBtn = document.getElementById('btn-export-png');
+    if (pngBtn) pngBtn.addEventListener('click', exportBoardPng);
+    if (noteForm) noteForm.addEventListener('submit', submitNoteForm);
+    const noteCancel = document.getElementById('note-cancel');
+    if (noteCancel) noteCancel.addEventListener('click', closeNoteModal);
+    const noteAttachAdd = document.getElementById('note-attach-add');
+    if (noteAttachAdd) noteAttachAdd.addEventListener('click', () => addAttachmentRow('', ''));
+    if (noteModal) {
+      noteModal.addEventListener('click', (ev) => {
+        if (ev.target === noteModal) closeNoteModal();
+      });
+    }
 
     for (const btn of document.querySelectorAll('.act')) {
       btn.addEventListener('click', async () => {
@@ -1214,20 +1717,25 @@ if (typeof document !== 'undefined') {
         try {
           if (action === 'save') {
             downloadSnapshot();
-            showToast('Downloaded local board JSON snapshot.');
+            showToast('Saved JSON snapshot (also stored in this browser).');
+            return;
+          }
+          if (action === 'export-png') {
+            exportBoardPng();
             return;
           }
           if (action === 'copy') {
+            persistBoard(true);
             const ok = await copyText(JSON.stringify(currentSnapshot(), null, 2));
-            showToast(ok ? 'Copied local board snapshot JSON.' : 'Could not copy — snapshot still available via Save.');
+            showToast(ok ? 'Copied board JSON.' : 'Could not copy — use Save instead.');
             return;
           }
           if (action === 'share') {
             const shareUrl = freezeLocalShareUrl(ui.selected);
             const ok = await copyText(shareUrl);
             showToast(ok
-              ? 'Copied local board URL (hash link, no network).'
-              : 'Local-only board — copy the page URL from the address bar.');
+              ? 'Copied local board URL (hash link).'
+              : 'Copy the page URL from the address bar.');
             return;
           }
           if (action === 'report') {
@@ -1235,10 +1743,10 @@ if (typeof document !== 'undefined') {
             return;
           }
           if (action === 'discussion') {
-            showToast('Discussion is local-only here (0 comments, no network).');
+            showToast('Discussion is local-only here (0 comments).');
             return;
           }
-          showToast('Local mock action.');
+          showToast('Local action.');
         } catch (_) {
           showToast('Local action failed in this browser.');
         }
@@ -1248,16 +1756,21 @@ if (typeof document !== 'undefined') {
     /* ================= screen-reader node index ================= */
 
     const index = document.getElementById('node-index');
-    for (const n of NODES.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-      const li = document.createElement('li');
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.dataset.id = n.id;
-      btn.textContent = `${n.name}: ${n.role}. ${n.neighbors.length} connections.`;
-      btn.addEventListener('focus', () => selectNode(n.id));
-      btn.addEventListener('click', () => selectNode(n.id, { fromList: true }));
-      li.appendChild(btn);
-      index.appendChild(li);
+
+    function rebuildNodeIndex() {
+      if (!index) return;
+      index.textContent = '';
+      for (const n of NODES.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+        const li = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.id = n.id;
+        btn.textContent = `${n.name}: ${n.role || 'note'}. ${(n.neighbors || []).length} connections.`;
+        btn.addEventListener('focus', () => selectNode(n.id));
+        btn.addEventListener('click', () => selectNode(n.id, { fromList: true }));
+        li.appendChild(btn);
+        index.appendChild(li);
+      }
     }
 
     function centerNode(idOrNode) {
@@ -1291,7 +1804,10 @@ if (typeof document !== 'undefined') {
 
     /* ================= boot ================= */
 
+    setEditorChrome(false);
+    if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
     buildNodes();
+    rebuildNodeIndex();
     renderEdges();
     renderLabels();
     fitView();
@@ -1304,6 +1820,9 @@ if (typeof document !== 'undefined') {
       centerNode,
       render: renderBoard,
       snapshot: currentSnapshot,
+      setEditing: setEditorChrome,
+      exportPng: exportBoardPng,
+      reorganize: reorganizeAroundJosh,
     };
 
     freezeStartSearch(graphModel, (node) => {
@@ -1315,6 +1834,10 @@ if (typeof document !== 'undefined') {
       }
       centerNode(node);
     });
+
+    // Keep search count in sync with live board size
+    const searchCount = document.getElementById('freeze-search-count');
+    if (searchCount) searchCount.textContent = `${NODES.length} subjects on the board`;
 
     applyHashSelection();
 
