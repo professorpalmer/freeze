@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
-  <meta name="description" content="Freese Index — an independent, offline mockup of a RedString-style investigation board mapping Josh Freese and his collaborators. No network requests, no auth.">
-  <title>Freese Index · Independent Mockup</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230b0e15'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='%23ff5c7a'/%3E%3C/svg%3E">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Freese Index — an independent, offline mockup of a RedString-style investigation board mapping Josh Freese and his collaborators. Cork wall, sticky notes, red yarn. No network requests, no auth.">
+  <title>Freese Index · Sticky-Note Board</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%236e4f2d'/%3E%3Crect x='3' y='3' width='10' height='10' fill='%23fff3a8'/%3E%3Ccircle cx='8' cy='4.5' r='1.4' fill='%23c62828'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body class="no-active">
+<body class="no-active mania-board">
 
   <a class="skip-link" href="#graph">Skip to the board graph</a>
 
@@ -24,7 +24,7 @@
 
     <div class="topbar-center">
       <h1 class="board-title">FREESE INDEX</h1>
-      <p class="board-sub">Independent mockup · not affiliated with RedString</p>
+      <p class="board-sub">Mania board mockup · sticky notes · red yarn · not RedString</p>
     </div>
 
     <div class="topbar-right">
@@ -32,9 +32,9 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7.5" width="9" height="6.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7.5V5.8a2.5 2.5 0 0 1 5 0v1.7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10.6" r="1.1" fill="currentColor"/></svg>
         <span>VIEW ONLY</span>
       </span>
-      <button id="btn-dim" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Dim strings (edges)">
+      <button id="btn-dim" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Dim yarn (edges)">
         <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
-        <span class="toggle-label">Dim strings</span>
+        <span class="toggle-label">Dim yarn</span>
       </button>
     </div>
   </header>
@@ -42,21 +42,35 @@
   <!-- ============ BOARD SURFACE ============ -->
   <main class="board" id="board">
     <svg id="graph" tabindex="0" role="img"
-         aria-label="Freese Index board. A dark investigation canvas with Josh Freese at the center, connected by red strings to bands, artists, and projects: Foo Fighters, A Perfect Circle, Nine Inch Nails, Devo, The Vandals, Guns N' Roses, Weezer, Suicidal Tendencies, Sting, and others. Pan with drag or arrow keys, zoom with the controls or the mouse wheel. Use the hidden node list after the board to focus each subject.">
+         aria-label="Freese Index board. A cork investigation wall with sticky-note subjects and red yarn strings. Josh Freese sits at the center, connected to bands, artists, and projects: Foo Fighters, A Perfect Circle, Nine Inch Nails, Devo, The Vandals, Guns N' Roses, Weezer, Suicidal Tendencies, Sting, and others. Pan with drag or arrow keys, zoom with the controls or the mouse wheel. Use the hidden node list after the board to focus each subject.">
       <defs>
-        <pattern id="dots" width="30" height="30" patternUnits="userSpaceOnUse">
-          <rect width="30" height="30" fill="#24201d"/>
-          <circle cx="1.6" cy="1.6" r="1.6" fill="#403932" opacity=".46"/>
-          <path d="M0 29.5h30" stroke="#171513" stroke-width=".7" opacity=".28"/>
+        <pattern id="cork" width="48" height="48" patternUnits="userSpaceOnUse">
+          <rect width="48" height="48" fill="#6a4a28"/>
+          <circle cx="6" cy="9" r="1.4" fill="#5a3c20" opacity=".55"/>
+          <circle cx="22" cy="4" r="1.1" fill="#8a6840" opacity=".4"/>
+          <circle cx="38" cy="14" r="1.7" fill="#4a341c" opacity=".5"/>
+          <circle cx="12" cy="28" r="1.2" fill="#7a5a34" opacity=".45"/>
+          <circle cx="30" cy="34" r="1.5" fill="#5c4024" opacity=".5"/>
+          <circle cx="44" cy="40" r="1" fill="#8a6840" opacity=".35"/>
+          <circle cx="18" cy="42" r="1.3" fill="#4a341c" opacity=".4"/>
+          <path d="M0 23.5h48M23.5 0v48" stroke="#4a341c" stroke-width=".5" opacity=".18"/>
+          <ellipse cx="9" cy="16" rx="3.2" ry="1.4" fill="#5a3c20" opacity=".22" transform="rotate(-18 9 16)"/>
+          <ellipse cx="33" cy="26" rx="2.8" ry="1.2" fill="#8a6840" opacity=".2" transform="rotate(12 33 26)"/>
         </pattern>
+        <filter id="paper-grain" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="noise"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0.95  0 0 0 0 0.9  0 0 0 0 0.78  0 0 0 0.07 0" result="grain"/>
+          <feBlend in="SourceGraphic" in2="grain" mode="multiply"/>
+        </filter>
         <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="6" result="b"/>
+          <feGaussianBlur stdDeviation="4" result="b"/>
           <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
         </filter>
       </defs>
 
       <g id="world">
-        <rect id="board-bg" width="2000" height="1400" fill="url(#dots)"/>
+        <rect id="board-bg" width="2000" height="1400" fill="url(#cork)"/>
+        <rect width="2000" height="1400" fill="#5c4124" opacity=".18"/>
         <path id="edges" class="strings strings-tier-related"></path>
         <path id="edges-strong" class="strings strings-tier-strong"></path>
         <path id="edges-core" class="strings strings-tier-core"></path>
@@ -94,7 +108,7 @@
 
     <!-- ============ BOTTOM ACTION CLUSTER ============ -->
     <footer class="actionbar">
-      <span class="actionbar-note">Independent mockup — actions are local only · no network</span>
+      <span class="actionbar-note">Independent mockup — cork · stickies · yarn · local only</span>
       <div class="actions" role="group" aria-label="Board actions">
         <button class="btn act" type="button" data-action="report" aria-label="Report board">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3h7.6l-1.9 3 1.9 3H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M4.2 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>

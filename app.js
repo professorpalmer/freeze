@@ -490,10 +490,11 @@ function freezeStartSearch(model, activate) {
 --------------------------------------------------------------------------- */
 
 const TYPES = {
-  person:  { color: '#5fe3c9', label: 'Person' },
-  band:    { color: '#b38cff', label: 'Band / group' },
-  project: { color: '#ffb25e', label: 'Project / record' },
-  subject: { color: '#ff5c7a', label: 'Board subject' },
+  // Sticky-note paper colors (mania board) — color = paper face for legend swatches
+  person:  { color: '#fff3a8', paper: '#fff3a8', ink: '#2a2418', pin: '#c62828', label: 'Person' },
+  band:    { color: '#c5e4f7', paper: '#c5e4f7', ink: '#1a2a38', pin: '#1e5a8a', label: 'Band / group' },
+  project: { color: '#d8f0c8', paper: '#d8f0c8', ink: '#1e2a18', pin: '#3d7a38', label: 'Project / record' },
+  subject: { color: '#ffe0e6', paper: '#ffe0e6', ink: '#3a1820', pin: '#c62828', label: 'Board subject' },
 };
 
 const NODES = [
@@ -577,7 +578,7 @@ const NODES = [
   // center of the web — drawn last so he sits on top
   { id: 'josh', type: 'person', name: 'Josh Freese', role: 'Drummer \u00b7 composer \u00b7 first-call session player',
     blurb: 'American drummer (b. 1972) whose career threads through punk, new wave, industrial, and arena rock — from The Vandals and Devo to A Perfect Circle, Nine Inch Nails, and Foo Fighters, plus 300+ studio credits.',
-    x: 940, y: 655, big: true },
+    x: 940, y: 655, big: true, paper: '#fffef2', pin: '#b71c1c' },
 ];
 
 const EDGES = [
@@ -616,15 +617,31 @@ const EDGES = [
   { id: 'e33', from: 'lohner', to: 'damning-well', label: 'founder', tier: 'related', strength: 'medium' },
 ];
 
-/* chip geometry — pure function of the data (safe to run under Node) */
+/** Stable sticky-note tilt in degrees from node id (−5…5). */
+function stickyTiltDegrees(id) {
+  let h = 2166136261;
+  const s = String(id || '');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 11) - 5;
+}
+
+/* sticky-note geometry — pure function of the data (safe to run under Node) */
 function finalizeNodes() {
   const byId = new Map();
   for (const n of NODES) {
-    n.h = n.big ? 44 : 30;
-    n.w = Math.max(96, 26 + n.name.length * 7.7 + (n.big ? 14 : 0));
+    const type = TYPES[n.type] || TYPES.person;
+    n.h = n.big ? 78 : 56;
+    n.w = Math.max(118, 34 + n.name.length * 8.4 + (n.big ? 24 : 0));
     n.cx = n.x + n.w / 2;
     n.cy = n.y + n.h / 2;
-    n.color = TYPES[n.type].color;
+    n.color = type.color;
+    n.paper = n.paper || type.paper;
+    n.ink = n.ink || type.ink;
+    n.pin = n.pin || type.pin;
+    n.tilt = stickyTiltDegrees(n.id);
     byId.set(n.id, n);
   }
   const adj = new Map();
@@ -688,7 +705,7 @@ if (typeof document !== 'undefined') {
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) continue;
         const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
-        const sag = Math.min(26, Math.hypot(b.cx - a.cx, b.cy - a.cy) * 0.06);
+        const sag = Math.min(42, Math.hypot(b.cx - a.cx, b.cy - a.cy) * 0.09);
         d += `M${a.cx.toFixed(1)},${a.cy.toFixed(1)} Q${mx.toFixed(1)},${(my + sag).toFixed(1)} ${b.cx.toFixed(1)},${b.cy.toFixed(1)}`;
       }
       return d;
@@ -753,41 +770,98 @@ if (typeof document !== 'undefined') {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'node' + (n.big ? ' big' : ''));
         g.setAttribute('data-node-id', n.id);
+        g.setAttribute('data-type', n.type);
         g.setAttribute('id', n.id);
         g.setAttribute('transform', `translate(${n.x},${n.y})`);
         g.setAttribute('role', 'group');
         g.setAttribute('aria-label', `${n.name} — ${n.role}`);
 
+        const note = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        note.setAttribute('class', 'note');
+        note.setAttribute('transform', `rotate(${n.tilt} ${n.w / 2} ${n.h / 2})`);
+
+        const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        shadow.setAttribute('class', 'paper-shadow');
+        shadow.setAttribute('x', 2.5);
+        shadow.setAttribute('y', 3.5);
+        shadow.setAttribute('width', n.w);
+        shadow.setAttribute('height', n.h);
+        shadow.setAttribute('rx', 2);
+
         const chip = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         chip.setAttribute('class', 'chip');
         chip.setAttribute('width', n.w);
         chip.setAttribute('height', n.h);
-        chip.setAttribute('rx', n.big ? 11 : 8);
+        chip.setAttribute('rx', 2);
+        chip.setAttribute('fill', n.paper);
 
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('class', 'dot');
-        dot.setAttribute('cx', 13);
-        dot.setAttribute('cy', n.h / 2);
-        dot.setAttribute('r', n.big ? 5 : 4);
-        dot.setAttribute('fill', n.color);
+        // Curl corner — tiny triangle fold
+        const curl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        curl.setAttribute('class', 'tape');
+        const cx = n.w;
+        const cy = n.h;
+        curl.setAttribute('d', `M${cx - 12},${cy} L${cx},${cy - 12} L${cx},${cy} Z`);
+        curl.setAttribute('fill', 'rgba(0,0,0,0.06)');
+        curl.setAttribute('stroke', 'none');
+
+        const tape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        tape.setAttribute('class', 'tape');
+        tape.setAttribute('x', n.w * 0.28);
+        tape.setAttribute('y', -5);
+        tape.setAttribute('width', n.w * 0.44);
+        tape.setAttribute('height', 12);
+        tape.setAttribute('rx', 1);
+        tape.setAttribute('transform', `rotate(${(n.tilt % 2 === 0 ? -3 : 4)} ${n.w / 2} 1)`);
+
+        const pinStem = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        pinStem.setAttribute('class', 'pin-stem');
+        pinStem.setAttribute('x1', n.w / 2);
+        pinStem.setAttribute('y1', 2);
+        pinStem.setAttribute('x2', n.w / 2);
+        pinStem.setAttribute('y2', 11);
+
+        const pin = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        pin.setAttribute('class', 'pin');
+        pin.setAttribute('cx', n.w / 2);
+        pin.setAttribute('cy', 7);
+        pin.setAttribute('r', n.big ? 5.2 : 4.2);
+        pin.setAttribute('fill', n.pin);
+
+        const pinShine = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        pinShine.setAttribute('class', 'pin-shine');
+        pinShine.setAttribute('cx', n.w / 2 - 1.4);
+        pinShine.setAttribute('cy', 5.6);
+        pinShine.setAttribute('r', 1.3);
 
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         lbl.setAttribute('class', 'lbl');
-        lbl.setAttribute('x', 24);
-        lbl.setAttribute('y', n.big ? 21 : 19.5);
+        lbl.setAttribute('x', n.w / 2);
+        lbl.setAttribute('y', n.big ? 36 : 32);
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.setAttribute('fill', n.ink);
         lbl.textContent = n.name;
 
-        g.appendChild(chip); g.appendChild(dot); g.appendChild(lbl);
+        note.appendChild(shadow);
+        note.appendChild(chip);
+        note.appendChild(curl);
+        note.appendChild(tape);
+        note.appendChild(pinStem);
+        note.appendChild(pin);
+        note.appendChild(pinShine);
+        note.appendChild(lbl);
 
         if (n.big) {
           const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           sub.setAttribute('class', 'sub');
-          sub.setAttribute('x', 24);
-          sub.setAttribute('y', 34);
+          sub.setAttribute('x', n.w / 2);
+          sub.setAttribute('y', 54);
+          sub.setAttribute('text-anchor', 'middle');
+          sub.setAttribute('fill', n.ink);
           sub.textContent = n.role;
-          g.appendChild(sub);
+          note.appendChild(sub);
         }
 
+        g.appendChild(note);
         nodesG.appendChild(g);
         nodeEls.set(n.id, g);
       }
@@ -930,14 +1004,14 @@ if (typeof document !== 'undefined') {
           '<p class="ro-kicker">Board status</p>' +
           '<h2>Freese Index</h2>' +
           `<p class="ro-role">${NODES.length} subjects \u00b7 ${EDGES.length} connections \u00b7 ${personCount} people</p>` +
-          '<p class="ro-blurb">A dark investigation board mapping Josh Freese\u2019s career web. Strings are red, cards are subjects \u2014 all data here is illustrative and stored locally.</p>' +
+          '<p class="ro-blurb">Cork wall, sticky notes, red yarn \u2014 a mania-thread career map of Josh Freese. Notes are subjects; yarn is connections. All data is illustrative and stored locally.</p>' +
           '<div class="ro-legend">' +
-          '<span><i style="background:#ff5c7a"></i>Board subject</span>' +
-          '<span><i style="background:#5fe3c9"></i>Person</span>' +
-          '<span><i style="background:#b38cff"></i>Band / group</span>' +
-          '<span><i style="background:#ffb25e"></i>Project / record</span>' +
+          `<span><i style="background:${TYPES.subject.color}"></i>Board subject</span>` +
+          `<span><i style="background:${TYPES.person.color}"></i>Person</span>` +
+          `<span><i style="background:${TYPES.band.color}"></i>Band / group</span>` +
+          `<span><i style="background:${TYPES.project.color}"></i>Project / record</span>` +
           '</div>' +
-          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom \u00b7 click a card for details \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim \u00b7 <kbd>I</kbd> interact \u00b7 <kbd>Esc</kbd> clear</p>';
+          '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom \u00b7 click a note for details \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>I</kbd> interact \u00b7 <kbd>Esc</kbd> clear</p>';
         return;
       }
       const n = byId.get(id);
