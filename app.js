@@ -406,8 +406,27 @@ function freezeWriteLocalBoard(payload) {
   }
 }
 
+function freezeReadShareFlags() {
+  if (typeof location === 'undefined') return { viewOnly: false, shared: false };
+  try {
+    const q = new URLSearchParams(location.search || '');
+    const viewParam = String(q.get('view') || q.get('mode') || '').toLowerCase();
+    const viewOnly = viewParam === '1' || viewParam === 'true' || viewParam === 'view' || viewParam === 'readonly';
+    const shared = q.get('shared') === '1' || q.get('fresh') === '1';
+    const hash = String(location.hash || '').replace(/^#/, '').toLowerCase();
+    if (hash === 'view' || hash.startsWith('view/') || hash.startsWith('view&')) {
+      return { viewOnly: true, shared };
+    }
+    return { viewOnly, shared };
+  } catch (_) {
+    return { viewOnly: false, shared: false };
+  }
+}
+
 function freezeHydrateBoardPayload(seed) {
-  const local = freezeReadLocalBoard();
+  const flags = freezeReadShareFlags();
+  // Shared/view links can opt out of this browser's local edits (?shared=1).
+  const local = flags.shared ? null : freezeReadLocalBoard();
   if (!local) return seed;
   return {
     source: {
@@ -424,14 +443,55 @@ function freezeHydrateBoardPayload(seed) {
   };
 }
 
-function freezeLocalShareUrl(selectedId) {
+function freezeLocalShareUrl(selectedId, opts) {
   if (typeof location === 'undefined') {
     return selectedId ? `#node=${encodeURIComponent(selectedId)}` : '#board';
   }
   const url = new URL(location.href);
+  const viewOnly = !!(opts && opts.viewOnly);
   url.search = '';
-  url.hash = selectedId ? `node=${encodeURIComponent(selectedId)}` : 'board';
+  if (viewOnly) url.searchParams.set('view', '1');
+  if (opts && opts.shared) url.searchParams.set('shared', '1');
+  url.hash = selectedId ? `node=${encodeURIComponent(selectedId)}` : '';
   return url.toString();
+}
+
+/** Grow cork so content has open margin on every side (room to pin more notes). */
+function freezeEnsureOpenBoardMargin(nodes, world, marginPx) {
+  const margin = Number.isFinite(marginPx) ? marginPx : 3600;
+  const list = Array.isArray(nodes) ? nodes : [];
+  const next = world && world.w && world.h ? { w: world.w, h: world.h } : { w: 2000, h: 1400 };
+  if (!list.length) {
+    next.w = Math.max(next.w, margin * 2);
+    next.h = Math.max(next.h, margin * 2);
+    return { world: next, shifted: false };
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of list) {
+    const w = Number(n.w) || 120;
+    const h = Number(n.h) || 56;
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + w);
+    maxY = Math.max(maxY, n.y + h);
+  }
+  const needLeft = Math.max(0, margin - minX);
+  const needTop = Math.max(0, margin - minY);
+  let shifted = false;
+  if (needLeft || needTop) {
+    for (const n of list) {
+      n.x += needLeft;
+      n.y += needTop;
+      if (Number.isFinite(n.cx)) n.cx += needLeft;
+      if (Number.isFinite(n.cy)) n.cy += needTop;
+    }
+    maxX += needLeft;
+    maxY += needTop;
+    shifted = true;
+  }
+  next.w = Math.max(next.w, Math.ceil(maxX + margin));
+  next.h = Math.max(next.h, Math.ceil(maxY + margin));
+  return { world: next, shifted };
 }
 
 /* ---------------------------------------------------------------------------
@@ -577,6 +637,11 @@ let EDGES = Array.isArray(BOARD.edges) ? BOARD.edges.slice() : [];
 let BOARD_WORLD = (BOARD.world && BOARD.world.w && BOARD.world.h)
   ? { w: BOARD.world.w, h: BOARD.world.h }
   : { w: 2000, h: 1400 };
+{
+  // Room to pin — imported boards were cork-tight; open a huge margin on every side.
+  const opened = freezeEnsureOpenBoardMargin(NODES, BOARD_WORLD, 3600);
+  BOARD_WORLD = opened.world;
+}
 
 /** Stable sticky-note tilt in degrees from node id (−5…5). */
 function stickyTiltDegrees(id) {
@@ -628,19 +693,23 @@ if (typeof document !== 'undefined') {
     let byId = finalizeNodes();
     let graphModel = freezeGraphModel(NODES, EDGES);
     const WORLD = { w: BOARD_WORLD.w, h: BOARD_WORLD.h };
+    const SHARE_FLAGS = freezeReadShareFlags();
 
     const svg = document.getElementById('graph');
     const world = document.getElementById('world');
     const boardBg = document.getElementById('board-bg');
     const boardBgShade = document.getElementById('board-bg-shade');
-    if (boardBg) {
-      boardBg.setAttribute('width', String(WORLD.w));
-      boardBg.setAttribute('height', String(WORLD.h));
+    function syncBoardSurfaceSize() {
+      if (boardBg) {
+        boardBg.setAttribute('width', String(WORLD.w));
+        boardBg.setAttribute('height', String(WORLD.h));
+      }
+      if (boardBgShade) {
+        boardBgShade.setAttribute('width', String(WORLD.w));
+        boardBgShade.setAttribute('height', String(WORLD.h));
+      }
     }
-    if (boardBgShade) {
-      boardBgShade.setAttribute('width', String(WORLD.w));
-      boardBgShade.setAttribute('height', String(WORLD.h));
-    }
+    syncBoardSurfaceSize();
     const nodesG = document.getElementById('nodes');
     const labelsG = document.getElementById('edge-labels');
     const edgesCorePath = document.getElementById('edges-core');
@@ -664,6 +733,7 @@ if (typeof document !== 'undefined') {
       dim: false,
       interactive: false,
       editing: false,
+      viewOnly: !!SHARE_FLAGS.viewOnly,
       chromeVisible: true,
       selected: null,
       hovered: null,
@@ -692,6 +762,7 @@ if (typeof document !== 'undefined') {
     }
 
     function persistBoard(immediate) {
+      if (ui.viewOnly) return;
       const write = () => {
         const snap = freezeBoardSnapshot(graphModel, ui.selected ? byId.get(ui.selected) : null, ui.path);
         freezeWriteLocalBoard(snap);
@@ -703,6 +774,28 @@ if (typeof document !== 'undefined') {
       }
       clearTimeout(persistTimer);
       persistTimer = setTimeout(write, 350);
+    }
+
+    function applyWorldSize(next) {
+      WORLD.w = next.w;
+      WORLD.h = next.h;
+      BOARD_WORLD.w = next.w;
+      BOARD_WORLD.h = next.h;
+      syncBoardSurfaceSize();
+    }
+
+    function expandWorldIfNeeded() {
+      const opened = freezeEnsureOpenBoardMargin(NODES, WORLD, 3600);
+      if (opened.world.w !== WORLD.w || opened.world.h !== WORLD.h || opened.shifted) {
+        applyWorldSize(opened.world);
+        if (opened.shifted) {
+          byId = finalizeNodes();
+          graphModel = freezeGraphModel(NODES, EDGES);
+          remountNodes();
+        }
+        return true;
+      }
+      return false;
     }
 
     function rebuildGraphModel() {
@@ -1251,7 +1344,7 @@ if (typeof document !== 'undefined') {
           '<p class="ro-kicker">Board status</p>' +
           '<h2>Freese Index</h2>' +
           `<p class="ro-role">${note}</p>` +
-          '<p class="ro-blurb">Cork wall, sticky notes, red yarn. Browse freely, or switch to Edit to post notes, yarn, and attachments. Use Panels to hide this chrome and see the board.</p>' +
+          '<p class="ro-blurb">Cork wall, sticky notes, red yarn. Browse freely, or Edit to post notes and yarn. Links on a note appear here when selected. Share view-only copies a guest URL. Use Panels to hide chrome.</p>' +
           '<div class="ro-legend">' +
           `<span><i style="background:${TYPES.pink.color}"></i>Pink</span>` +
           `<span><i style="background:${TYPES.yellow.color}"></i>Yellow</span>` +
@@ -1354,7 +1447,7 @@ if (typeof document !== 'undefined') {
       drag.sx = e.clientX; drag.sy = e.clientY;
       drag.moved = false;
 
-      if (n && (ui.interactive || ui.editing)) {
+      if (n && !ui.viewOnly && (ui.interactive || ui.editing)) {
         drag.mode = 'node'; drag.id = n.id; drag.nx = n.x; drag.ny = n.y;
         nodeEls.get(n.id).classList.add('dragging');
         document.body.classList.add('interactive-drag');
@@ -1433,6 +1526,7 @@ if (typeof document !== 'undefined') {
           else selectNode(drag.id);
         } else {
           rebuildSpatialIndex();
+          expandWorldIfNeeded();
           persistBoard(false);
           scheduleFrame({ cull: true, edges: true, lodPaint: true, labels: true });
         }
@@ -1516,6 +1610,7 @@ if (typeof document !== 'undefined') {
     /* ================= toggles + editor ================= */
 
     function setEditorChrome(editing) {
+      if (ui.viewOnly) editing = false;
       ui.editing = editing;
       document.body.classList.toggle('editing', editing);
       if (modeBtn) modeBtn.setAttribute('aria-pressed', String(editing));
@@ -1533,6 +1628,10 @@ if (typeof document !== 'undefined') {
     }
 
     function toggleEditing() {
+      if (ui.viewOnly) {
+        showToast('This is a view-only link — editing is off. Open the main URL to edit.');
+        return;
+      }
       setEditorChrome(!ui.editing);
       showToast(ui.editing
         ? 'Edit mode on — use Add note, or Link yarn from a selected note.'
@@ -1540,6 +1639,10 @@ if (typeof document !== 'undefined') {
     }
 
     function startAddNote() {
+      if (ui.viewOnly) {
+        showToast('View-only link — editing disabled.');
+        return;
+      }
       if (!ui.editing) setEditorChrome(true);
       if (!ui.chromeVisible) {
         ui.chromeVisible = true;
@@ -1547,6 +1650,14 @@ if (typeof document !== 'undefined') {
         if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
       }
       openNoteModal();
+    }
+
+    async function copyViewOnlyLink() {
+      const shareUrl = freezeLocalShareUrl(null, { viewOnly: true, shared: true });
+      const ok = await copyText(shareUrl);
+      showToast(ok
+        ? 'Copied view-only URL (no edit chrome; ignores this browser’s local edits).'
+        : 'Could not copy — use ?view=1&shared=1 on the site URL.');
     }
 
     function toggleChrome() {
@@ -1565,6 +1676,10 @@ if (typeof document !== 'undefined') {
     }
 
     function toggleInteractive() {
+      if (ui.viewOnly) {
+        showToast('View-only link — dragging notes is off.');
+        return;
+      }
       ui.interactive = !ui.interactive;
       document.body.classList.toggle('interactive', ui.interactive);
       document.getElementById('btn-interact').setAttribute('aria-checked', String(ui.interactive));
@@ -1572,7 +1687,7 @@ if (typeof document !== 'undefined') {
     }
 
     function handleEditAction(action, id) {
-      if (!ui.editing) return;
+      if (ui.viewOnly || !ui.editing) return;
       if (action === 'link') {
         ui.linkFrom = id;
         document.body.classList.add('linking');
@@ -1706,6 +1821,7 @@ if (typeof document !== 'undefined') {
       };
       NODES.push(node);
       closeNoteModal();
+      expandWorldIfNeeded();
       refreshBoard({ persist: true });
       selectNode(node.id);
       centerNode(node.id);
@@ -1953,11 +2069,11 @@ if (typeof document !== 'undefined') {
             return;
           }
           if (action === 'share') {
-            const shareUrl = freezeLocalShareUrl(ui.selected);
+            const shareUrl = freezeLocalShareUrl(null, { viewOnly: true, shared: true });
             const ok = await copyText(shareUrl);
             showToast(ok
-              ? 'Copied local board URL (hash link).'
-              : 'Copy the page URL from the address bar.');
+              ? 'Copied view-only share URL (?view=1&shared=1).'
+              : 'Copy failed — use ?view=1&shared=1 on the address bar.');
             return;
           }
           if (action === 'report') {
@@ -2026,6 +2142,12 @@ if (typeof document !== 'undefined') {
 
     /* ================= boot ================= */
 
+    if (ui.viewOnly) {
+      document.body.classList.add('view-only');
+      document.title = 'Freese Index · View only';
+      const viewBadge = document.getElementById('view-only-badge');
+      if (viewBadge) viewBadge.hidden = false;
+    }
     setEditorChrome(false);
     if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
     // Skip per-note settle animation on large boards (hundreds of CSS animations tank phones).
@@ -2035,7 +2157,10 @@ if (typeof document !== 'undefined') {
     fitView();
     flushFrame();
     updateReadout(null);
-    showToast('Tip: tap Add note (or Edit board) to post. Panels hides the chrome.');
+    if (!ui.viewOnly) persistBoard(true); // keep expanded cork size in this browser
+    showToast(ui.viewOnly
+      ? 'View-only board — pan, zoom, and search. Editing is off.'
+      : 'Tip: Add note to post. Share board copies a view-only URL for friends.');
 
     window.__freezeIndexBoard = {
       selectNode: (id) => selectNode(typeof id === 'object' ? id.id : id),

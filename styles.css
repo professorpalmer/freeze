@@ -266,6 +266,30 @@ body.editing .badge-mode svg { display: none; }
   font-weight: 800;
   letter-spacing: 0.03em;
 }
+.badge-view-only {
+  display: none;
+  align-items: center;
+  padding: 6px 10px;
+  font: 700 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5a3410;
+  background: rgba(255, 243, 168, 0.9);
+  border: 1px solid rgba(184, 137, 74, 0.55);
+  border-radius: 4px;
+  transform: rotate(-1deg);
+}
+body.view-only .badge-view-only { display: inline-flex; }
+body.view-only .btn-edit,
+body.view-only .btn-add,
+body.view-only .editor-only {
+  display: none !important;
+}
+.modal-hint {
+  margin: 4px 0 8px;
+  font: 500 12px/1.35 var(--font-ui);
+  color: rgba(60, 40, 20, 0.72);
+}
 .btn-edit[aria-pressed="true"] {
   background: linear-gradient(180deg, #e8f6ea, #c8e6c9);
   border-color: #5a9a62;
