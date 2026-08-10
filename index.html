@@ -51,8 +51,8 @@
       <button id="btn-suggest" class="btn btn-suggest view-only-show" type="button" hidden title="Suggest a change for the editor">
         <span>Suggest change</span>
       </button>
-      <button id="btn-suggestions" class="btn editor-only" type="button" hidden title="Review suggested changes">
-        <span>Suggestions</span>
+      <button id="btn-suggestions" class="btn editor-only btn-suggestions" type="button" hidden title="Review suggested changes (paste Discord JSON packs here)">
+        <span data-suggestions-label>Suggestions</span>
       </button>
     </div>
   </header>
@@ -166,7 +166,7 @@
     <div class="modal" id="suggestions-modal" hidden>
       <div class="modal-card modal-card-wide">
         <h2 class="modal-title">Suggestions inbox</h2>
-        <p class="modal-hint">Local suggestions on this device. Paste JSON from Discord or a friend to import.</p>
+        <p class="modal-hint">Central review queue on this device. Viewers: Suggest change → Copy for Discord. You: paste their JSON here, Jump to the note, Done when handled.</p>
         <label class="modal-field">Paste / import JSON
           <textarea id="suggestions-import" rows="3" maxlength="8000" placeholder='{"text":"…","nodeId":"…"} or an array'></textarea>
         </label>
@@ -249,6 +249,10 @@
           <span>Import JSON</span>
         </button>
         <input id="board-import-input" type="file" accept="application/json,.json" hidden />
+        <button class="btn act editor-only" type="button" data-action="suggestions" aria-label="Review suggestions inbox" title="Central inbox for change requests — paste Discord packs, Jump to the note">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7.2H8.2L5 13v-2.3H3V3.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5.5 6.5h5M5.5 9h3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          <span data-suggestions-label>Suggestions</span>
+        </button>
         <button class="btn act" type="button" data-action="revert" aria-label="Revert to last save" title="Discard unsaved edits and restore the last Save board checkpoint (or the public board if you never saved)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 7.2A4.8 4.8 0 1 1 8 12.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.2 3.6v3.6H7.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Revert to last save</span>

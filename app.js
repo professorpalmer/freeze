@@ -2377,6 +2377,7 @@ if (typeof document !== 'undefined') {
       for (const el of document.querySelectorAll('.editor-only')) {
         el.hidden = !editing;
       }
+      refreshSuggestionsBadge();
       if (!editing) {
         ui.linkFrom = null;
         document.body.classList.remove('linking');
@@ -3079,6 +3080,7 @@ if (typeof document !== 'undefined') {
       const list = freezeReadSuggestions();
       list.unshift(sug);
       freezeWriteSuggestions(list.slice(0, 80));
+      refreshSuggestionsBadge();
     }
 
     async function copySuggestionForDiscord() {
@@ -3128,12 +3130,34 @@ if (typeof document !== 'undefined') {
       }
     }
 
+    function suggestionCount() {
+      return freezeReadSuggestions().length;
+    }
+
+    function refreshSuggestionsBadge() {
+      const n = suggestionCount();
+      const label = n > 0 ? `Suggestions (${n})` : 'Suggestions';
+      for (const el of document.querySelectorAll('[data-suggestions-label]')) {
+        el.textContent = label;
+      }
+      const btn = document.getElementById('btn-suggestions');
+      if (btn) {
+        btn.classList.toggle('has-suggestions', n > 0);
+        btn.title = n > 0
+          ? `${n} suggestion(s) to review — paste Discord JSON here too`
+          : 'Review suggested changes (paste Discord JSON packs here)';
+      }
+    }
+
     function renderSuggestionsList() {
       const listEl = document.getElementById('suggestions-list');
       if (!listEl) return;
       const items = freezeReadSuggestions();
+      refreshSuggestionsBadge();
       if (!items.length) {
-        listEl.innerHTML = '<li><p class="sug-text">No suggestions yet. Paste JSON from Discord above, or save one in view mode.</p></li>';
+        listEl.innerHTML =
+          '<li><p class="sug-text">No suggestions on this device yet.</p>' +
+          '<p class="sug-meta">Viewers use Suggest change → Copy for Discord. Paste their JSON pack above, then Jump to the note.</p></li>';
         return;
       }
       listEl.innerHTML = items.map((s) => {
@@ -3371,21 +3395,27 @@ if (typeof document !== 'undefined') {
     }
 
     async function copyText(text) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-        return true;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (_) { /* fall through to execCommand */ }
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+        document.body.removeChild(area);
+        return ok;
+      } catch (_) {
+        return false;
       }
-      const area = document.createElement('textarea');
-      area.value = text;
-      area.setAttribute('readonly', '');
-      area.style.position = 'fixed';
-      area.style.left = '-9999px';
-      document.body.appendChild(area);
-      area.select();
-      let ok = false;
-      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-      document.body.removeChild(area);
-      return ok;
     }
 
     function downloadSnapshot() {
@@ -3421,27 +3451,59 @@ if (typeof document !== 'undefined') {
     }
 
     async function uploadBoardHost(snap) {
-      const blob = new Blob([JSON.stringify(snap)], { type: 'application/json' });
-      // 0x0.st anonymous file host (fallback for GitHub issue publish)
-      try {
-        const fd = new FormData();
-        fd.append('file', blob, 'freese-index-board.json');
-        const res = await fetch('https://0x0.st', { method: 'POST', body: fd });
-        if (res.ok) {
+      const payload = JSON.stringify(snap);
+      const blob = new Blob([payload], { type: 'application/json' });
+      // Prefer hosts that accept anonymous CORS POSTs from the browser.
+      const attempts = [
+        async () => {
+          const res = await fetch('https://paste.rs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+          });
+          if (!res.ok) return null;
           const url = (await res.text()).trim();
-          if (/^https?:\/\//i.test(url)) return url;
-        }
-      } catch (_) { /* ignore */ }
-      try {
-        const fd = new FormData();
-        fd.append('reqtype', 'fileupload');
-        fd.append('fileToUpload', blob, 'freese-index-board.json');
-        const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
-        if (res.ok) {
+          return /^https?:\/\//i.test(url) ? url : null;
+        },
+        async () => {
+          const fd = new FormData();
+          fd.append('file', blob, 'freese-index-board.json');
+          const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: fd });
+          if (!res.ok) return null;
+          const data = await res.json().catch(() => null);
+          const url = data && data.data && data.data.url;
+          if (!url) return null;
+          // tmpfiles returns a page URL; raw is /dl/
+          return String(url).replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+        },
+        async () => {
+          const fd = new FormData();
+          fd.append('reqtype', 'fileupload');
+          fd.append('time', '72h');
+          fd.append('fileToUpload', blob, 'freese-index-board.json');
+          const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+            method: 'POST',
+            body: fd,
+          });
+          if (!res.ok) return null;
           const url = (await res.text()).trim();
-          if (/^https?:\/\//i.test(url)) return url;
-        }
-      } catch (_) { /* ignore */ }
+          return /^https?:\/\//i.test(url) ? url : null;
+        },
+        async () => {
+          const fd = new FormData();
+          fd.append('file', blob, 'freese-index-board.json');
+          const res = await fetch('https://0x0.st', { method: 'POST', body: fd });
+          if (!res.ok) return null;
+          const url = (await res.text()).trim();
+          return /^https?:\/\//i.test(url) ? url : null;
+        },
+      ];
+      for (const attempt of attempts) {
+        try {
+          const url = await attempt();
+          if (url) return url;
+        } catch (_) { /* try next host */ }
+      }
       return null;
     }
 
@@ -3454,7 +3516,7 @@ if (typeof document !== 'undefined') {
       const ok = window.confirm(
         'Publish THIS browser board to the live public Freese Index?\n\n' +
         'Save board only checkpoints this device. Publish updates https://freeze-index.onrender.com/ for everyone.\n\n' +
-        'If the direct publish link is asleep, a GitHub issue pack opens — click Submit new issue (title must stay [freese-publish]…).'
+        'If direct publish is asleep, a GitHub issue form opens — click “Submit new issue” (keep the [freese-publish] title).'
       );
       if (!ok) return;
 
@@ -3462,8 +3524,12 @@ if (typeof document !== 'undefined') {
       const snap = currentSnapshot();
       showToast('Publishing to public…');
 
-      // Host JSON early so the GitHub-issue fallback always has a BOARD_URL.
-      const hosted = await uploadBoardHost(snap);
+      let hosted = null;
+      try {
+        hosted = await uploadBoardHost(snap);
+      } catch (_) {
+        hosted = null;
+      }
 
       let lastErr = '';
       for (const endpoint of cfg.endpoints) {
@@ -3478,7 +3544,7 @@ if (typeof document !== 'undefined') {
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data && data.ok) {
-            showToast(`Published ${data.nodes || snap.nodes.length} notes — Render will refresh shortly.`);
+            showToast(`Published ${data.nodes || snap.nodes.length} notes — public site updates in a minute.`);
             return;
           }
           lastErr = (data && data.error) || (`HTTP ${res.status}`);
@@ -3487,8 +3553,8 @@ if (typeof document !== 'undefined') {
         }
       }
 
-      showToast('Direct publish offline — opening GitHub issue pack…');
-      downloadSnapshot();
+      // Durable fallback: open a prefilled GitHub issue (Action applies BOARD_URL).
+      // Open the issue FIRST so a clipboard denial cannot abort publish.
       const issueTitle = `[freese-publish] ${snap.meta.nodeCount} notes / ${snap.meta.edgeCount} edges`;
       const issueBody = [
         'Traditionology public board publish request.',
@@ -3499,8 +3565,22 @@ if (typeof document !== 'undefined') {
         `edges: ${snap.meta.edgeCount}`,
         `savedAt: ${snap.meta.savedAt || ''}`,
         '',
-        'A GitHub Action will apply this to board-data.js and Render will redeploy.',
+        'GitHub Action apply-board-from-issue will write board-data.js and Render redeploys.',
       ].join('\n');
+      const newIssue = 'https://github.com/professorpalmer/freeze/issues/new?title=' +
+        encodeURIComponent(issueTitle) +
+        '&body=' + encodeURIComponent(issueBody.slice(0, 5500));
+      let opened = false;
+      try {
+        const win = window.open(newIssue, '_blank', 'noopener');
+        opened = !!win;
+      } catch (_) {
+        opened = false;
+      }
+      // Only download JSON when we could not host a BOARD_URL.
+      if (!hosted) {
+        try { downloadSnapshot(); } catch (_) { /* ignore */ }
+      }
       const pack = [
         'FREESE INDEX — PUBLISH PACK',
         issueTitle,
@@ -3511,14 +3591,16 @@ if (typeof document !== 'undefined') {
         'Title must start with [freese-publish]',
         hosted ? '' : 'Attach the downloaded freese-index-board.json if BOARD_URL is missing.',
       ].filter(Boolean).join('\n');
-      await copyText(pack);
-      const newIssue = 'https://github.com/professorpalmer/freeze/issues/new?title=' +
-        encodeURIComponent(issueTitle) +
-        '&body=' + encodeURIComponent(issueBody.slice(0, 5500));
-      try { window.open(newIssue, '_blank', 'noopener'); } catch (_) { /* ignore */ }
-      showToast(hosted
-        ? `Copied pack + opened GitHub issue with BOARD_URL. Click Submit new issue (${lastErr || 'tunnel offline'}).`
-        : `Downloaded JSON — attach it on the opened GitHub issue, then Submit (${lastErr || 'tunnel offline'}).`);
+      const copied = await copyText(pack);
+      if (opened) {
+        showToast(hosted
+          ? 'GitHub issue opened with BOARD_URL — click Submit new issue to finish publish.'
+          : 'GitHub issue opened — attach the downloaded JSON, then Submit new issue.');
+      } else if (copied) {
+        showToast('Publish pack copied. Open github.com/professorpalmer/freeze/issues/new and paste.');
+      } else {
+        showToast('Could not open GitHub. ' + (lastErr ? `(${lastErr}) ` : '') + 'Use Import JSON + Cary, or retry Publish.');
+      }
     }
 
     function importBoardJsonFile(file) {
@@ -3734,11 +3816,16 @@ if (typeof document !== 'undefined') {
             return;
           }
           if (action === 'share') {
-            const shareUrl = freezeLocalShareUrl(null, { viewOnly: true, shared: true });
-            const ok = await copyText(shareUrl);
-            showToast(ok
-              ? 'Copied view-only share URL (?view=1&shared=1).'
-              : 'Copy failed — use ?view=1&shared=1 on the address bar.');
+            await copyViewOnlyLink();
+            return;
+          }
+          if (action === 'suggestions') {
+            if (ui.viewOnly) {
+              showToast('Switch to Edit board to review suggestions.');
+              return;
+            }
+            if (!ui.editing) setEditorChrome(true);
+            openSuggestionsModal();
             return;
           }
           if (action === 'discussion') {
@@ -3746,7 +3833,8 @@ if (typeof document !== 'undefined') {
             return;
           }
           showToast('Local action.');
-        } catch (_) {
+        } catch (err) {
+          try { console.error('Freese action failed', action, err); } catch (_) { /* ignore */ }
           showToast('Local action failed in this browser.');
         }
       });

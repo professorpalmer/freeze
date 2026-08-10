@@ -297,6 +297,9 @@ body.view-only .btn-add,
 body.view-only .editor-only,
 body.view-only [data-action="save"],
 body.view-only [data-action="revert"],
+body.view-only [data-action="publish"],
+body.view-only [data-action="import"],
+body.view-only [data-action="suggestions"],
 body.view-only [data-action="copy"] {
   display: none !important;
 }
@@ -304,6 +307,13 @@ body.view-only .view-only-show { display: inline-flex !important; }
 .btn-suggest {
   font-weight: 800;
   letter-spacing: 0.03em;
+  background: linear-gradient(180deg, #fff6e8, #f0d4a8);
+  border-color: #b8894a;
+  color: #5a3410;
+}
+.btn-suggestions.has-suggestions,
+body.editing .btn-suggestions.has-suggestions {
+  font-weight: 800;
   background: linear-gradient(180deg, #fff6e8, #f0d4a8);
   border-color: #b8894a;
   color: #5a3410;
