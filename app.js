@@ -713,13 +713,19 @@ function stickyTiltDegrees(id) {
   return ((h >>> 0) % 11) - 5;
 }
 
+/** Post-it face text — bold caps for Helvetica / Arial Black. */
+function noteFaceLabel(name) {
+  return String(name || '').toUpperCase();
+}
+
 /* sticky-note geometry — pure function of the data (safe to run under Node) */
 function finalizeNodes() {
   const byId = new Map();
   for (const n of NODES) {
     const type = TYPES[n.type] || TYPES.person;
-    n.h = n.big ? 78 : 56;
-    n.w = Math.max(118, 34 + n.name.length * 8.4 + (n.big ? 24 : 0));
+    // Tighter chips so desktop high-zoom stickies read as notes, not billboards.
+    n.h = n.big ? 46 : 32;
+    n.w = Math.max(64, 14 + n.name.length * 6.4 + (n.big ? 10 : 0));
     n.cx = n.x + n.w / 2;
     n.cy = n.y + n.h / 2;
     n.color = type.color;
@@ -1128,7 +1134,7 @@ if (typeof document !== 'undefined') {
       }
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.font = '600 11px ' + lodFontFamily;
+      ctx.font = '900 10px ' + lodFontFamily;
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
       for (const n of visible) {
@@ -1136,9 +1142,10 @@ if (typeof document !== 'undefined') {
         const sx = Math.round(n.cx * s + tx);
         const sy = Math.round(n.cy * s + ty + 5);
         if (sx < -80 || sy < -20 || sx > w + 80 || sy > h + 20) continue;
-        ctx.strokeText(n.name, sx, sy);
+        const label = noteFaceLabel(n.name);
+        ctx.strokeText(label, sx, sy);
         ctx.fillStyle = n.ink || '#2a1a0c';
-        ctx.fillText(n.name, sx, sy);
+        ctx.fillText(label, sx, sy);
       }
     }
 
@@ -1182,7 +1189,7 @@ if (typeof document !== 'undefined') {
       const nextSticky = new Set();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = '600 11px ' + lodFontFamily;
+      ctx.font = '900 10px ' + lodFontFamily;
       for (const n of labelCandidates) {
         const sx = Math.round(n.cx * s + tx);
         const sy = Math.round(n.cy * s + ty);
@@ -1192,11 +1199,12 @@ if (typeof document !== 'undefined') {
         if (panning && !wasSticky && !force) continue;
         if (!canPlace(sx, sy, force)) continue;
         nextSticky.add(n.id);
+        const label = noteFaceLabel(n.name);
         ctx.lineWidth = 3.2;
         ctx.strokeStyle = 'rgba(247, 241, 225, 0.9)';
-        ctx.strokeText(n.name, sx, sy);
+        ctx.strokeText(label, sx, sy);
         ctx.fillStyle = n.ink || '#2a1a0c';
-        ctx.fillText(n.name, sx, sy);
+        ctx.fillText(label, sx, sy);
       }
       stickyFarLabelIds = nextSticky;
     }
@@ -1204,9 +1212,9 @@ if (typeof document !== 'undefined') {
     function paintCompactNotes(ctx, visible, s, tx, ty, w, h) {
       const span = Math.max(0.01, FAR_SCALE - COMPACT_FLOOR);
       const t = Math.max(0, Math.min(1, (s - COMPACT_FLOOR) / span));
-      const noteW = 28 + t * (MOBILE_LIGHT ? 78 : 88);
-      const noteH = 16 + t * (MOBILE_LIGHT ? 34 : 40);
-      const fontPx = Math.max(7, Math.round(7.5 + t * 5.5));
+      const noteW = 22 + t * (MOBILE_LIGHT ? 62 : 70);
+      const noteH = 12 + t * (MOBILE_LIGHT ? 26 : 30);
+      const fontPx = Math.max(6, Math.round(6.5 + t * 4.2));
       const pinR = 1.4 + t * 2.2;
       const showText = noteW >= 36;
       const panning = drag.mode === 'pan' || drag.mode === 'node';
@@ -1243,7 +1251,7 @@ if (typeof document !== 'undefined') {
       const nextSticky = new Set();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = '600 ' + fontPx + 'px ' + lodFontFamily;
+      ctx.font = '900 ' + fontPx + 'px ' + lodFontFamily;
 
       for (const n of candidates) {
         const sx = Math.round(n.cx * s + tx);
@@ -1277,8 +1285,8 @@ if (typeof document !== 'undefined') {
         ctx.fill();
 
         if (showText) {
-          const maxChars = Math.max(4, Math.floor(hw * 2 / (fontPx * 0.58)));
-          let label = n.name || '';
+          const maxChars = Math.max(4, Math.floor(hw * 2 / (fontPx * 0.62)));
+          let label = noteFaceLabel(n.name);
           if (label.length > maxChars) label = label.slice(0, Math.max(3, maxChars - 1)) + '\u2026';
           ctx.lineWidth = Math.max(2, fontPx * 0.28);
           ctx.strokeStyle = 'rgba(247, 241, 225, 0.88)';
@@ -1503,17 +1511,17 @@ if (typeof document !== 'undefined') {
         const pin = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         pin.setAttribute('class', 'pin');
         pin.setAttribute('cx', n.w / 2);
-        pin.setAttribute('cy', 7);
-        pin.setAttribute('r', n.big ? 5 : 3.8);
+        pin.setAttribute('cy', n.big ? 6 : 5);
+        pin.setAttribute('r', n.big ? 3.6 : 2.8);
         pin.setAttribute('fill', n.pin);
 
         const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         lbl.setAttribute('class', 'lbl');
         lbl.setAttribute('x', n.w / 2);
-        lbl.setAttribute('y', n.big ? 36 : 32);
+        lbl.setAttribute('y', n.big ? 26 : 21);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', n.ink);
-        lbl.textContent = n.name;
+        lbl.textContent = noteFaceLabel(n.name);
 
         note.appendChild(chip);
         note.appendChild(pin);
@@ -1523,10 +1531,10 @@ if (typeof document !== 'undefined') {
           const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           sub.setAttribute('class', 'sub');
           sub.setAttribute('x', n.w / 2);
-          sub.setAttribute('y', 54);
+          sub.setAttribute('y', 38);
           sub.setAttribute('text-anchor', 'middle');
           sub.setAttribute('fill', n.ink);
-          sub.textContent = n.role;
+          sub.textContent = noteFaceLabel(n.role);
           note.appendChild(sub);
         }
 
