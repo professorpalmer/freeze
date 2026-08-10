@@ -677,7 +677,9 @@ body.settle-anim .node .note {
   stroke: rgba(140, 40, 35, 0.35);
 }
 
-body.interactive .node { cursor: pointer; }
+body.editing .node { cursor: grab; }
+body.editing.interactive-drag .node,
+body.interactive-drag .node { cursor: grabbing; }
 
 @keyframes note-settle {
   from {
