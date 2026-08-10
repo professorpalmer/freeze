@@ -323,6 +323,28 @@ body.chrome-collapsed .actionbar {
 body.chrome-collapsed #btn-chrome {
   border-color: rgba(154, 58, 52, 0.45);
 }
+/* Phones: collapsed mode clears Add/Dim; keep Edit + Show UI reachable */
+body.chrome-collapsed.mobile-light .btn-add,
+body.chrome-collapsed.mobile-light #btn-dim {
+  display: none !important;
+}
+body.chrome-collapsed.mobile-light #btn-chrome {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 35;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #fffdf6, #f0e4c8);
+  box-shadow: var(--shadow);
+}
+body.chrome-collapsed.mobile-light #btn-chrome .toggle-label {
+  display: inline !important;
+  font-size: 12px;
+  font-weight: 800;
+}
+body.mobile-light .node .note {
+  animation: none !important;
+}
 
 /* Add-note modal */
 .modal {
@@ -1239,12 +1261,32 @@ body.interactive-drag .node { cursor: grabbing; }
 
 @media (max-width: 620px) {
   .topbar { padding: 8px 10px; min-height: 54px; }
-  .board-title { font-size: 20px; letter-spacing: 0.1em; }
+  .board-title { font-size: 18px; letter-spacing: 0.08em; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toggle-label { display: none; }
+  /* Keep Panels readable — unlabeled toggles made "hide shit" undiscoverable */
+  #btn-chrome .toggle-label {
+    display: inline;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
   .btn-ghost span { display: none; }
   .btn-ghost { padding: 7px 9px; }
+  .btn-edit span,
+  .btn-add span { display: none; }
+  .btn-edit, .btn-add { padding: 7px 9px; }
   .badge-mode span { display: none; }
   .badge-mode { padding: 6px; border-radius: 50%; transform: none; }
+
+  .freeze-search {
+    top: 64px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 28vh;
+    overflow: auto;
+    transform: none;
+  }
 
   .zoomctl {
     right: 10px; top: auto; bottom: 118px;
@@ -1252,22 +1294,34 @@ body.interactive-drag .node { cursor: grabbing; }
     flex-direction: row; flex-wrap: wrap; justify-content: center;
     max-width: 168px;
   }
+  body.chrome-collapsed .zoomctl {
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
   .zoom-pct { border: 0; margin: 0; }
   .ctl { width: 34px; height: 34px; }
 
   .readout {
     left: 10px; right: 10px; bottom: 118px;
-    width: auto; max-width: none; max-height: 34vh;
+    width: auto; max-width: none; max-height: 28vh;
     padding: 12px 14px;
     transform: none;
   }
 
   .toast { bottom: 108px; transform: translateX(-50%); }
+  body.chrome-collapsed .toast {
+    bottom: max(64px, env(safe-area-inset-bottom));
+  }
 
   .act span { display: inline; }
   .actions { display: grid; grid-template-columns: repeat(3, 1fr); }
   .act { padding: 8px 6px; font-size: 11.5px; }
   .act svg { width: 14px; height: 14px; }
+
+  .actionbar {
+    max-height: 34vh;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 @media (max-width: 380px) {

@@ -929,6 +929,14 @@ if (typeof document !== 'undefined') {
       return edgesByTierCache[tier] || edgesByTierCache.related;
     }
 
+    const MOBILE_LIGHT = !!(window.matchMedia && (
+      window.matchMedia('(max-width: 720px)').matches ||
+      window.matchMedia('(pointer: coarse)').matches
+    ));
+    const FAR_SCALE = MOBILE_LIGHT ? 0.72 : LOD_FAR_SCALE;
+    const COSMOS_SCALE = MOBILE_LIGHT ? 0.24 : LOD_COSMOS_SCALE;
+    const LOD_DPR_CAP = MOBILE_LIGHT ? 1 : 2;
+
     /* ---------- spatial index + viewport (keeps ~500 notes feeling light) ---------- */
 
     const SPATIAL_CELL = 240;
@@ -1023,11 +1031,11 @@ if (typeof document !== 'undefined') {
     }
 
     function isFarLod() {
-      return view.scale < LOD_FAR_SCALE;
+      return view.scale < FAR_SCALE;
     }
 
     function isCosmosLod() {
-      return view.scale < LOD_COSMOS_SCALE;
+      return view.scale < COSMOS_SCALE;
     }
 
     function formatZoomLabel(scale) {
@@ -1043,7 +1051,7 @@ if (typeof document !== 'undefined') {
       const cssW = svg.clientWidth || 0;
       const cssH = svg.clientHeight || 0;
       if (!cssW || !cssH) return false;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, LOD_DPR_CAP);
       const needW = Math.round(cssW * dpr);
       const needH = Math.round(cssH * dpr);
       if (lodCanvas.width !== needW || lodCanvas.height !== needH || lodCanvasCssW !== cssW || lodCanvasCssH !== cssH) {
@@ -1068,10 +1076,12 @@ if (typeof document !== 'undefined') {
       const s = view.scale;
       const tx = view.tx;
       const ty = view.ty;
-      const cosmos = s < LOD_COSMOS_SCALE;
+      const cosmos = s < COSMOS_SCALE;
       const dimmed = ui.dim && !ui.active;
       // Deep cosmos: dots only — yarn becomes noise and burns fill rate.
+      // Phones: skip related yarn whenever far — 770 strokes thrash mobile GPUs.
       const paintYarn = !cosmos || s >= 0.025;
+      const paintRelated = paintYarn && !MOBILE_LIGHT;
 
       if (paintYarn) {
         ctx.lineCap = 'round';
@@ -1082,7 +1092,9 @@ if (typeof document !== 'undefined') {
               { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.5)', width: 2.15 },
             ]
           : [
-              { list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.1)' : 'rgba(179, 58, 50, 0.48)', width: 2.05 },
+              ...(paintRelated
+                ? [{ list: edgesByTierCache.related, stroke: dimmed ? 'rgba(179, 58, 50, 0.1)' : 'rgba(179, 58, 50, 0.48)', width: 2.05 }]
+                : []),
               { list: edgesByTierCache.strong, stroke: dimmed ? 'rgba(198, 40, 40, 0.12)' : 'rgba(198, 40, 40, 0.58)', width: 2.25 },
               { list: edgesByTierCache.core, stroke: dimmed ? 'rgba(198, 40, 40, 0.14)' : 'rgba(198, 40, 40, 0.7)', width: 2.45 },
             ];
@@ -1333,7 +1345,7 @@ if (typeof document !== 'undefined') {
 
     function applyTransform() {
       // Far/cosmos: canvas owns yarn+names — don't rebuild SVG path strings every pan frame.
-      if (view.scale < LOD_FAR_SCALE) {
+      if (view.scale < FAR_SCALE) {
         scheduleFrame({ transform: true, cull: true, lodPaint: true });
       } else {
         scheduleFrame({
@@ -1948,8 +1960,16 @@ if (typeof document !== 'undefined') {
     function toggleChrome() {
       ui.chromeVisible = !ui.chromeVisible;
       document.body.classList.toggle('chrome-collapsed', !ui.chromeVisible);
-      if (chromeBtn) chromeBtn.setAttribute('aria-checked', String(ui.chromeVisible));
-      showToast(ui.chromeVisible ? 'Panels shown.' : 'Panels hidden — board clear.');
+      if (chromeBtn) {
+        chromeBtn.setAttribute('aria-checked', String(ui.chromeVisible));
+        chromeBtn.setAttribute(
+          'aria-label',
+          ui.chromeVisible ? 'Hide panels (search, info, footer)' : 'Show panels (search, info, footer)'
+        );
+        const label = chromeBtn.querySelector('.toggle-label');
+        if (label) label.textContent = ui.chromeVisible ? 'Panels' : 'Show UI';
+      }
+      showToast(ui.chromeVisible ? 'Panels shown.' : 'Board clear — tap Show UI for search / info.');
     }
 
     function toggleDim() {
@@ -2721,9 +2741,22 @@ if (typeof document !== 'undefined') {
       if (viewBadge) viewBadge.hidden = false;
     }
     setEditorChrome(false);
-    if (chromeBtn) chromeBtn.setAttribute('aria-checked', 'true');
+    if (MOBILE_LIGHT) {
+      document.body.classList.add('mobile-light');
+      // Phones start clear — search/status/footer eat the cork otherwise.
+      ui.chromeVisible = false;
+      document.body.classList.add('chrome-collapsed');
+      if (chromeBtn) {
+        chromeBtn.setAttribute('aria-checked', 'false');
+        chromeBtn.setAttribute('aria-label', 'Show panels (search, info, footer)');
+        const label = chromeBtn.querySelector('.toggle-label');
+        if (label) label.textContent = 'Show UI';
+      }
+    } else if (chromeBtn) {
+      chromeBtn.setAttribute('aria-checked', 'true');
+    }
     // Skip per-note settle animation on large boards (hundreds of CSS animations tank phones).
-    if (NODES.length <= 60) document.body.classList.add('settle-anim');
+    if (NODES.length <= 60 && !MOBILE_LIGHT) document.body.classList.add('settle-anim');
     buildNodes();
     rebuildNodeIndex();
     fitView();
@@ -2732,7 +2765,9 @@ if (typeof document !== 'undefined') {
     if (!ui.viewOnly) persistBoard(true); // keep expanded cork size in this browser
     showToast(ui.viewOnly
       ? 'View-only board — pan, deep-zoom, and search. Editing is off.'
-      : 'Tip: Add note to post. Share board copies a view-only URL for friends.');
+      : (MOBILE_LIGHT
+        ? 'Board clear for mobile — tap Show UI (top right) for search / info / save.'
+        : 'Tip: Add note to post. Share board copies a view-only URL for friends.'));
 
     window.__freezeIndexBoard = {
       selectNode: (id) => selectNode(typeof id === 'object' ? id.id : id),
