@@ -1,0 +1,13 @@
+{
+  "name": "freeze-index",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Freese Index cork board — static site + on-site publish API",
+  "scripts": {
+    "start": "node server/publish.cjs",
+    "publish-api": "node server/publish.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

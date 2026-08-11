@@ -1,4 +1,5 @@
-# Local browser captures created while inspecting the reference site
-pm-browser-*.png
-preview-*.png
-.DS_Store
+# Local-only / Render env — do not commit private key material
+server/deploy_key
+server/deploy_key.b64
+.env
+.env.*

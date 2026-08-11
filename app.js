@@ -3396,23 +3396,23 @@ if (typeof document !== 'undefined') {
 
     async function copyText(text) {
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-          return true;
-        }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
       } catch (_) { /* fall through to execCommand */ }
       try {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.left = '-9999px';
-        document.body.appendChild(area);
-        area.select();
-        let ok = false;
-        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-        document.body.removeChild(area);
-        return ok;
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(area);
+      return ok;
       } catch (_) {
         return false;
       }
@@ -3444,67 +3444,13 @@ if (typeof document !== 'undefined') {
 
     function publishConfig() {
       const cfg = (typeof window !== 'undefined' && window.FREESE_PUBLISH) || {};
+      const extras = Array.isArray(cfg.endpoints) ? cfg.endpoints.filter(Boolean) : [];
+      // Same-origin first — never send editors through GitHub.
+      const endpoints = ['/api/publish'].concat(extras.filter((u) => u !== '/api/publish'));
       return {
         passphrase: cfg.passphrase || 'traditionology',
-        endpoints: Array.isArray(cfg.endpoints) ? cfg.endpoints.filter(Boolean) : [],
+        endpoints,
       };
-    }
-
-    async function uploadBoardHost(snap) {
-      const payload = JSON.stringify(snap);
-      const blob = new Blob([payload], { type: 'application/json' });
-      // Prefer hosts that accept anonymous CORS POSTs from the browser.
-      const attempts = [
-        async () => {
-          const res = await fetch('https://paste.rs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-          });
-          if (!res.ok) return null;
-          const url = (await res.text()).trim();
-          return /^https?:\/\//i.test(url) ? url : null;
-        },
-        async () => {
-          const fd = new FormData();
-          fd.append('file', blob, 'freese-index-board.json');
-          const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: fd });
-          if (!res.ok) return null;
-          const data = await res.json().catch(() => null);
-          const url = data && data.data && data.data.url;
-          if (!url) return null;
-          // tmpfiles returns a page URL; raw is /dl/
-          return String(url).replace('tmpfiles.org/', 'tmpfiles.org/dl/');
-        },
-        async () => {
-          const fd = new FormData();
-          fd.append('reqtype', 'fileupload');
-          fd.append('time', '72h');
-          fd.append('fileToUpload', blob, 'freese-index-board.json');
-          const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
-            method: 'POST',
-            body: fd,
-          });
-          if (!res.ok) return null;
-          const url = (await res.text()).trim();
-          return /^https?:\/\//i.test(url) ? url : null;
-        },
-        async () => {
-          const fd = new FormData();
-          fd.append('file', blob, 'freese-index-board.json');
-          const res = await fetch('https://0x0.st', { method: 'POST', body: fd });
-          if (!res.ok) return null;
-          const url = (await res.text()).trim();
-          return /^https?:\/\//i.test(url) ? url : null;
-        },
-      ];
-      for (const attempt of attempts) {
-        try {
-          const url = await attempt();
-          if (url) return url;
-        } catch (_) { /* try next host */ }
-      }
-      return null;
     }
 
     async function publishBoardToPublic() {
@@ -3515,21 +3461,14 @@ if (typeof document !== 'undefined') {
       const cfg = publishConfig();
       const ok = window.confirm(
         'Publish THIS browser board to the live public Freese Index?\n\n' +
-        'Save board only checkpoints this device. Publish updates https://freeze-index.onrender.com/ for everyone.\n\n' +
-        'If direct publish is asleep, a GitHub issue form opens — click “Submit new issue” (keep the [freese-publish] title).'
+        'Save only keeps a checkpoint on this device.\n' +
+        'Publish updates the public site for everyone.'
       );
       if (!ok) return;
 
       persistBoard(true);
       const snap = currentSnapshot();
       showToast('Publishing to public…');
-
-      let hosted = null;
-      try {
-        hosted = await uploadBoardHost(snap);
-      } catch (_) {
-        hosted = null;
-      }
 
       let lastErr = '';
       for (const endpoint of cfg.endpoints) {
@@ -3544,7 +3483,12 @@ if (typeof document !== 'undefined') {
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data && data.ok) {
-            showToast(`Published ${data.nodes || snap.nodes.length} notes — public site updates in a minute.`);
+            showToast(
+              `Published ${data.nodes || snap.nodes.length} notes` +
+              (data.committed === false
+                ? ' — public board already matched.'
+                : ' — public site will refresh in about a minute.')
+            );
             return;
           }
           lastErr = (data && data.error) || (`HTTP ${res.status}`);
@@ -3553,54 +3497,11 @@ if (typeof document !== 'undefined') {
         }
       }
 
-      // Durable fallback: open a prefilled GitHub issue (Action applies BOARD_URL).
-      // Open the issue FIRST so a clipboard denial cannot abort publish.
-      const issueTitle = `[freese-publish] ${snap.meta.nodeCount} notes / ${snap.meta.edgeCount} edges`;
-      const issueBody = [
-        'Traditionology public board publish request.',
-        '',
-        hosted ? `BOARD_URL: ${hosted}` : 'BOARD_URL: (attach freese-index-board.json to this issue)',
-        '',
-        `nodes: ${snap.meta.nodeCount}`,
-        `edges: ${snap.meta.edgeCount}`,
-        `savedAt: ${snap.meta.savedAt || ''}`,
-        '',
-        'GitHub Action apply-board-from-issue will write board-data.js and Render redeploys.',
-      ].join('\n');
-      const newIssue = 'https://github.com/professorpalmer/freeze/issues/new?title=' +
-        encodeURIComponent(issueTitle) +
-        '&body=' + encodeURIComponent(issueBody.slice(0, 5500));
-      let opened = false;
-      try {
-        const win = window.open(newIssue, '_blank', 'noopener');
-        opened = !!win;
-      } catch (_) {
-        opened = false;
-      }
-      // Only download JSON when we could not host a BOARD_URL.
-      if (!hosted) {
-        try { downloadSnapshot(); } catch (_) { /* ignore */ }
-      }
-      const pack = [
-        'FREESE INDEX — PUBLISH PACK',
-        issueTitle,
-        '',
-        issueBody,
-        '',
-        'Open: https://github.com/professorpalmer/freeze/issues/new',
-        'Title must start with [freese-publish]',
-        hosted ? '' : 'Attach the downloaded freese-index-board.json if BOARD_URL is missing.',
-      ].filter(Boolean).join('\n');
-      const copied = await copyText(pack);
-      if (opened) {
-        showToast(hosted
-          ? 'GitHub issue opened with BOARD_URL — click Submit new issue to finish publish.'
-          : 'GitHub issue opened — attach the downloaded JSON, then Submit new issue.');
-      } else if (copied) {
-        showToast('Publish pack copied. Open github.com/professorpalmer/freeze/issues/new and paste.');
-      } else {
-        showToast('Could not open GitHub. ' + (lastErr ? `(${lastErr}) ` : '') + 'Use Import JSON + Cary, or retry Publish.');
-      }
+      showToast(
+        'Publish is temporarily offline on the server. Try again in a minute' +
+        (lastErr ? ` (${lastErr})` : '') +
+        '.'
+      );
     }
 
     function importBoardJsonFile(file) {
@@ -3855,16 +3756,16 @@ if (typeof document !== 'undefined') {
     function rebuildNodeIndex() {
       if (!index) return;
       index.textContent = '';
-      for (const n of NODES.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-        const li = document.createElement('li');
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.id = n.id;
+    for (const n of NODES.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.id = n.id;
         btn.textContent = `${n.name}: ${n.role || 'note'}. ${(n.neighbors || []).length} connections.`;
-        btn.addEventListener('focus', () => selectNode(n.id));
-        btn.addEventListener('click', () => selectNode(n.id, { fromList: true }));
-        li.appendChild(btn);
-        index.appendChild(li);
+      btn.addEventListener('focus', () => selectNode(n.id));
+      btn.addEventListener('click', () => selectNode(n.id, { fromList: true }));
+      li.appendChild(btn);
+      index.appendChild(li);
       }
     }
 
@@ -3946,7 +3847,7 @@ if (typeof document !== 'undefined') {
         view.scale = clamp(MOBILE_LIGHT ? 0.55 : 0.7, ZOOM_MIN, ZOOM_MAX);
         centerNode(josh.id);
       } else {
-        fitView();
+    fitView();
       }
     }
     flushFrame();

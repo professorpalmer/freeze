@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: freeze-index
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: "node -v"
+    startCommand: "node server/publish.cjs"
+    healthCheckPath: /health
+    envVars:
+      - key: FREESE_PUBLISH_PASS
+        value: traditionology
+      - key: NODE_VERSION
+        value: "20"
