@@ -249,7 +249,6 @@ body {
   color: #8a2e28;
   background: rgba(255, 230, 220, 0.75);
   white-space: nowrap;
-  transform: rotate(-1.2deg);
 }
 .badge svg { width: 12px; height: 12px; }
 
@@ -262,14 +261,12 @@ body {
 .badge-mode {
   cursor: pointer;
   font: inherit;
-  transform: rotate(-1.2deg);
 }
 .badge-mode[aria-pressed="true"] {
   color: #1e4a28;
   border-color: rgba(45, 120, 60, 0.55);
   background: rgba(210, 240, 210, 0.85);
   border-style: solid;
-  transform: rotate(1deg);
 }
 body.editing .badge-mode svg { display: none; }
 
@@ -289,7 +286,6 @@ body.editing .badge-mode svg { display: none; }
   background: rgba(255, 243, 168, 0.9);
   border: 1px solid rgba(184, 137, 74, 0.55);
   border-radius: 4px;
-  transform: rotate(-1deg);
 }
 body.view-only .badge-view-only { display: inline-flex; }
 body.view-only .btn-edit,
@@ -473,7 +469,6 @@ body.mobile-light .node .note {
   border: 1px solid var(--kraft-edge);
   border-radius: 2px;
   box-shadow: var(--shadow);
-  transform: rotate(-0.4deg);
 }
 .modal-title {
   margin: 0 0 12px;
@@ -954,7 +949,6 @@ body.interactive-drag .node { cursor: grabbing; }
     0 0 0 1px rgba(255, 255, 255, 0.35) inset;
   font-size: 12px;
   line-height: 1.4;
-  transform: rotate(-0.6deg);
 }
 .freeze-search::before {
   content: "";
@@ -1032,7 +1026,7 @@ body.interactive-drag .node { cursor: grabbing; }
   z-index: 20;
   right: 16px;
   top: 50%;
-  transform: translateY(-50%) rotate(1deg);
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1086,7 +1080,7 @@ body.interactive-drag .node { cursor: grabbing; }
   bottom: 76px;
   width: 312px;
   max-width: calc(100vw - 32px);
-  max-height: 46vh;
+  max-height: 52vh;
   overflow: auto;
   background:
     linear-gradient(165deg, #fffdf7 0%, #f0e4c8 100%);
@@ -1096,7 +1090,6 @@ body.interactive-drag .node { cursor: grabbing; }
   box-shadow:
     var(--shadow),
     0 0 0 1px rgba(255, 255, 255, 0.4) inset;
-  transform: rotate(-0.8deg);
   scrollbar-width: thin;
 }
 .readout::before {
@@ -1193,7 +1186,14 @@ body.interactive-drag .node { cursor: grabbing; }
   color: var(--faint);
 }
 
-.ro-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.ro-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 28vh;
+  overflow: auto;
+}
 .ro-link {
   font-size: 11.5px;
   font-weight: 700;
@@ -1265,6 +1265,84 @@ body.interactive-drag .node { cursor: grabbing; }
 }
 .ro-path-hops li { margin: 2px 0; }
 
+.ro-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+.ro-tools .ro-link,
+.ro-tools a.ro-link {
+  text-decoration: none;
+}
+.ro-trace {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed var(--kraft-edge);
+}
+.ro-trace label {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0 0 6px;
+}
+.ro-trace input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  color: var(--ink);
+  background: #fffef8;
+  border: 1px solid #c9b48a;
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.ro-trace-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 120px;
+  overflow: auto;
+}
+.ro-explore {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--kraft-edge);
+}
+.ro-explore-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.ro-explore-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.ro-explore-list li { margin: 3px 0; }
+.ro-explore-list button {
+  border: 0;
+  background: transparent;
+  color: #7a241c;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.ro-explore-list button:hover { text-decoration: underline; }
+.ro-explore-meta {
+  color: var(--faint);
+  font-weight: 500;
+}
+
 .ro-hint {
   margin: 10px 0 0;
   padding-top: 9px;
@@ -1293,7 +1371,7 @@ body.interactive-drag .node { cursor: grabbing; }
   z-index: 40;
   left: 50%;
   bottom: 92px;
-  transform: translateX(-50%) rotate(-0.4deg);
+  transform: translateX(-50%);
   max-width: min(92vw, 560px);
   background: linear-gradient(180deg, #fffdf6, #f0e4c8);
   border: 1px solid var(--kraft-edge);

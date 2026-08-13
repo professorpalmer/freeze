@@ -195,13 +195,93 @@ function freezeResolveNode(value, model) {
   return model.byId.get(text) || model.byName.get(text.toLowerCase()) || null;
 }
 
-function freezeShortestPath(model, start) {
-  const josh = model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese')
-    || model.nodes.find((node) => /josh[-_ ]freese/i.test(freezeNodeId(node)));
-  if (!start || !josh) return { target: josh || null, nodes: [], edges: [], disconnected: true };
+function freezeJoshNode(model) {
+  if (!model || !Array.isArray(model.nodes)) return null;
+  const byName = model.nodes.find((node) => freezeNodeName(node).toLowerCase() === 'josh freese');
+  if (byName) return byName;
+  const bySlug = model.nodes.find((node) => /josh[-_ ]freese/i.test(freezeNodeId(node)));
+  if (bySlug) return bySlug;
+  const id = freezeJoshId();
+  if (model.byId && model.byId.has(id)) return model.byId.get(id);
+  return null;
+}
+
+function freezeWikipediaSearchUrl(name) {
+  const q = String(name || '').trim();
+  if (!q) return '';
+  return 'https://en.wikipedia.org/wiki/Special:Search?go=Go&search=' + encodeURIComponent(q);
+}
+
+function freezeDegreeRanks(model, limit) {
+  const cap = Number.isFinite(limit) ? Math.max(1, limit) : 12;
+  if (!model || !Array.isArray(model.nodes)) return [];
+  return model.nodes.map((node) => {
+    const id = freezeNodeId(node);
+    return {
+      id,
+      name: freezeNodeName(node),
+      degree: (model.adjacency.get(id) || []).length,
+    };
+  }).sort((a, b) => b.degree - a.degree || a.name.localeCompare(b.name)).slice(0, cap);
+}
+
+function freezeBusyYarn(model, hub, limit) {
+  const cap = Number.isFinite(limit) ? Math.max(1, limit) : 12;
+  const target = freezeResolveNode(hub, model) || freezeJoshNode(model);
+  if (!target || !model || !model.adjacency) return [];
+  const startId = freezeNodeId(target);
+  const parent = new Map([[startId, null]]);
+  const via = new Map();
+  const queue = [startId];
+  for (let i = 0; i < queue.length; i += 1) {
+    const current = queue[i];
+    (model.adjacency.get(current) || []).forEach(({ id, edge }) => {
+      if (parent.has(id)) return;
+      parent.set(id, current);
+      via.set(id, edge);
+      queue.push(id);
+    });
+  }
+  const traffic = new Map();
+  for (const node of model.nodes) {
+    let cursor = freezeNodeId(node);
+    if (!parent.has(cursor) || cursor === startId) continue;
+    while (cursor && cursor !== startId) {
+      const edge = via.get(cursor);
+      if (!edge) break;
+      const eid = String(edge.id || `${edge.source || edge.from}|${edge.target || edge.to}`);
+      const row = traffic.get(eid) || { edge, count: 0 };
+      row.count += 1;
+      traffic.set(eid, row);
+      cursor = parent.get(cursor);
+    }
+  }
+  return [...traffic.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, cap)
+    .map((row) => {
+      const fromId = row.edge.from || row.edge.source;
+      const toId = row.edge.to || row.edge.target;
+      return {
+        id: row.edge.id,
+        fromId,
+        toId,
+        from: freezeNodeName(model.byId.get(fromId)) || fromId,
+        to: freezeNodeName(model.byId.get(toId)) || toId,
+        label: row.edge.label || 'connected',
+        count: row.count,
+      };
+    });
+}
+
+function freezeShortestPath(model, start, target) {
+  const hub = target != null
+    ? freezeResolveNode(target, model)
+    : freezeJoshNode(model);
+  if (!start || !hub) return { target: hub || null, nodes: [], edges: [], disconnected: true };
   const startId = freezeNodeId(start);
-  const targetId = freezeNodeId(josh);
-  if (startId === targetId) return { target: josh, nodes: [start], edges: [], disconnected: false };
+  const targetId = freezeNodeId(hub);
+  if (startId === targetId) return { target: hub, nodes: [start], edges: [], disconnected: false };
 
   const previous = new Map([[startId, null]]);
   const via = new Map();
@@ -216,7 +296,7 @@ function freezeShortestPath(model, start) {
       queue.push(id);
     });
   }
-  if (!previous.has(targetId)) return { target: josh, nodes: [start], edges: [], disconnected: true };
+  if (!previous.has(targetId)) return { target: hub, nodes: [start], edges: [], disconnected: true };
 
   const pathIds = [];
   const pathEdges = [];
@@ -227,7 +307,7 @@ function freezeShortestPath(model, start) {
     cursor = previous.get(cursor);
   }
   return {
-    target: josh,
+    target: hub,
     nodes: pathIds.map((id) => model.byId.get(id)).filter(Boolean),
     edges: pathEdges,
     disconnected: false,
@@ -250,20 +330,22 @@ function freezeDescribeHop(edge, model, fromId, toId) {
 
 function freezePathSummary(node, model, path) {
   const result = path || freezeShortestPath(model, node);
-  if (!result.target) return { summary: 'Josh Freese is not present in this graph.', hops: [], path: result };
+  const hubName = freezeNodeName(result.target) || 'Josh Freese';
+  if (!result.target) return { summary: `${hubName} is not present in this graph.`, hops: [], path: result };
   if (result.disconnected) {
     return {
-      summary: `${freezeNodeName(node)} is disconnected from Josh Freese.`,
+      summary: `${freezeNodeName(node)} is disconnected from ${hubName}.`,
       hops: [],
       path: result,
     };
   }
   if (result.edges.length === 0) {
-    return { summary: 'Josh Freese is the selected subject.', hops: [], path: result };
+    return { summary: `${hubName} is the selected subject.`, hops: [], path: result };
   }
   const names = result.nodes.map(freezeNodeName).join(' → ');
+  const hopCount = result.nodes.length - 1;
   return {
-    summary: `Path to Josh Freese: ${names} (${result.nodes.length - 1} hop${result.nodes.length - 1 === 1 ? '' : 's'})`,
+    summary: `Path to ${hubName}: ${names} (${hopCount} hop${hopCount === 1 ? '' : 's'})`,
     hops: result.edges.map((edge, index) => {
       const fromId = freezeNodeId(result.nodes[index]);
       const toId = freezeNodeId(result.nodes[index + 1]);
@@ -952,6 +1034,8 @@ if (typeof document !== 'undefined') {
       hovered: null,
       active: null,
       path: null,
+      hubId: freezeJoshId(),
+      traceTargetId: null,
       linkFrom: null,
       suggestEdgeId: null,
     };
@@ -1015,16 +1099,16 @@ if (typeof document !== 'undefined') {
     }
 
     function rebuildHopDistances() {
-      const joshId = freezeJoshId();
+      const hubId = (ui.hubId && byId.has(ui.hubId)) ? ui.hubId : freezeJoshId();
       const dist = new Map();
       if (!graphModel || !graphModel.adjacency) {
         hopDistCache = dist;
         return dist;
       }
       const queue = [];
-      if (byId.has(joshId)) {
-        dist.set(joshId, 0);
-        queue.push(joshId);
+      if (byId.has(hubId)) {
+        dist.set(hubId, 0);
+        queue.push(hubId);
       }
       while (queue.length) {
         const cur = queue.shift();
@@ -1994,9 +2078,56 @@ if (typeof document !== 'undefined') {
       scheduleFrame({ lodPaint: true });
     }
 
+    function hubNode() {
+      if (ui.hubId && byId.has(ui.hubId)) return byId.get(ui.hubId);
+      return freezeJoshNode(graphModel);
+    }
+
+    function hubDisplayName() {
+      const n = hubNode();
+      return n ? n.name : 'Josh Freese';
+    }
+
+    function hubIsJosh() {
+      const n = hubNode();
+      return !!(n && /^josh\s+freese$/i.test(n.name));
+    }
+
+    function pathTargetNode() {
+      if (ui.traceTargetId && byId.has(ui.traceTargetId)) return byId.get(ui.traceTargetId);
+      return hubNode();
+    }
+
+    function setHub(id) {
+      const next = (id && byId.has(id)) ? id : freezeJoshId();
+      ui.hubId = next;
+      ui.traceTargetId = null;
+      hopDistCache = null;
+      applyHopColorsToDom();
+      syncHopColorToggleUi();
+      if (ui.selected && byId.has(ui.selected)) {
+        setPathForNode(ui.selected);
+        updateReadout(ui.selected);
+      } else {
+        updateReadout(null);
+      }
+      showToast(`Separation is now from ${hubDisplayName()}.`);
+    }
+
+    function setTraceTarget(id) {
+      ui.traceTargetId = (id && byId.has(id) && id !== ui.selected) ? id : null;
+      if (ui.selected) {
+        setPathForNode(ui.selected);
+        updateReadout(ui.selected);
+      }
+      const t = ui.traceTargetId ? byId.get(ui.traceTargetId) : null;
+      showToast(t ? `Green yarn traces the path to ${t.name}.` : `Path follows ${hubDisplayName()}.`);
+    }
+
     function setPathForNode(id) {
       const node = id ? byId.get(id) : null;
-      ui.path = node ? freezeShortestPath(graphModel, node) : null;
+      const target = pathTargetNode();
+      ui.path = node ? freezeShortestPath(graphModel, node, target) : null;
       for (const [nid, g] of nodeEls) {
         const onPath = !!(ui.path && ui.path.nodes && ui.path.nodes.some((n) => freezeNodeId(n) === nid));
         g.classList.toggle('on-path', onPath);
@@ -2010,6 +2141,7 @@ if (typeof document !== 'undefined') {
     function selectNode(id, { fromList = false } = {}) {
       ui.selected = id;
       ui.hovered = null;
+      ui.traceTargetId = null;
       for (const [nid, g] of nodeEls) g.classList.toggle('sel', nid === id);
       setPathForNode(id);
       setActive(id);
@@ -2024,6 +2156,7 @@ if (typeof document !== 'undefined') {
       ui.selected = null;
       ui.hovered = null;
       ui.path = null;
+      ui.traceTargetId = null;
       for (const g of nodeEls.values()) {
         g.classList.remove('sel');
         g.classList.remove('on-path');
@@ -2040,7 +2173,9 @@ if (typeof document !== 'undefined') {
       const names = [];
       for (const e of n.neighbors) {
         const other = byId.get(e.from === id ? e.to : e.from);
-        if (!seen.has(other.id)) { seen.add(other.id); names.push(other); }
+        if (!other || seen.has(other.id)) continue;
+        seen.add(other.id);
+        names.push(other);
       }
       return names.sort((a, b) => a.name.localeCompare(b.name));
     }
@@ -2049,10 +2184,92 @@ if (typeof document !== 'undefined') {
       const n = byId.get(id);
       return n.neighbors.map((e) => {
         const other = byId.get(e.from === id ? e.to : e.from);
+        if (!other) return null;
         const meta = `${e.label} · ${e.tier}/${e.strength}`;
         const evidence = e.evidence ? ` — ${e.evidence}` : '';
         return { edge: e, other, text: `${other.name} — ${meta}${evidence}` };
-      }).sort((a, b) => a.other.name.localeCompare(b.other.name));
+      }).filter(Boolean).sort((a, b) => a.other.name.localeCompare(b.other.name));
+    }
+
+    function jumpToNode(nid) {
+      if (!nid || !byId.has(nid)) return;
+      selectNode(nid);
+      centerNode(nid);
+    }
+
+    function exploreBoardHtml() {
+      const hub = hubDisplayName();
+      const hubs = freezeDegreeRanks(graphModel, 12);
+      const busy = freezeBusyYarn(graphModel, hubNode(), 10);
+      return '<section class="ro-explore" aria-label="Explore the board">' +
+        '<p class="ro-explore-title">Most strings</p>' +
+        '<ol class="ro-explore-list">' +
+        hubs.map((row) =>
+          `<li><button type="button" data-go="${escapeHtml(row.id)}">${escapeHtml(row.name)}</button>` +
+          ` <span class="ro-explore-meta">${row.degree}</span></li>`
+        ).join('') +
+        '</ol>' +
+        `<p class="ro-explore-title">Busiest yarn toward ${escapeHtml(hub)}</p>` +
+        '<ol class="ro-explore-list">' +
+        (busy.length
+          ? busy.map((row) =>
+            `<li><button type="button" data-go="${escapeHtml(row.fromId)}">${escapeHtml(row.from)}</button>` +
+            ` \u2014 ${escapeHtml(row.label)} \u2014 ` +
+            `<button type="button" data-go="${escapeHtml(row.toId)}">${escapeHtml(row.to)}</button>` +
+            ` <span class="ro-explore-meta">${row.count} paths</span></li>`
+          ).join('')
+          : '<li>No yarn paths to this hub.</li>') +
+        '</ol>' +
+        `<p class="ro-hint">Color by hops is the distance heatmap from ${escapeHtml(hub)}. Wikipedia opens from a selected note \u2014 no URLs to paste.</p>` +
+        (hubIsJosh()
+          ? ''
+          : '<div class="ro-tools"><button type="button" class="ro-link" data-reset-hub>Reset hub to Josh Freese</button></div>') +
+        '</section>';
+    }
+
+    function bindTraceSearch(excludeId) {
+      const input = readout.querySelector('#ro-trace-input');
+      const results = readout.querySelector('#ro-trace-results');
+      if (!input || !results) return;
+      const render = () => {
+        freezeClearElement(results);
+        const q = String(input.value || '').trim();
+        if (!q) return;
+        const found = freezeSearchNodes(graphModel, q, 8);
+        found.matches.forEach((hit) => {
+          const node = hit.node || hit;
+          const nid = freezeNodeId(node);
+          if (!nid || nid === excludeId) return;
+          const li = document.createElement('li');
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ro-link';
+          btn.textContent = freezeNodeName(node);
+          btn.addEventListener('click', () => setTraceTarget(nid));
+          li.appendChild(btn);
+          results.appendChild(li);
+        });
+      };
+      input.addEventListener('input', render);
+    }
+
+    function bindReadout(id) {
+      for (const b of readout.querySelectorAll('[data-go]')) {
+        b.addEventListener('click', () => jumpToNode(b.getAttribute('data-go')));
+      }
+      for (const b of readout.querySelectorAll('[data-edit]')) {
+        b.addEventListener('click', () => handleEditAction(b.getAttribute('data-edit'), id));
+      }
+      for (const b of readout.querySelectorAll('[data-edit-edge]')) {
+        b.addEventListener('click', () => openEdgeModal(b.getAttribute('data-edit-edge')));
+      }
+      const setHubBtn = readout.querySelector('[data-set-hub]');
+      if (setHubBtn) setHubBtn.addEventListener('click', () => setHub(id));
+      const resetHubBtn = readout.querySelector('[data-reset-hub]');
+      if (resetHubBtn) resetHubBtn.addEventListener('click', () => setHub(freezeJoshId()));
+      const clearTraceBtn = readout.querySelector('[data-clear-trace]');
+      if (clearTraceBtn) clearTraceBtn.addEventListener('click', () => setTraceTarget(null));
+      if (id) bindTraceSearch(id);
     }
 
     function updateReadout(id) {
@@ -2063,11 +2280,12 @@ if (typeof document !== 'undefined') {
             (source.local ? ' \u00b7 local edits saved on this device' :
               (source.importedAt || source.origin ? ' \u00b7 public Freese Index snapshot' : ''))
           : `${NODES.length} subjects \u00b7 ${EDGES.length} connections`;
+        const hub = hubDisplayName();
         readout.innerHTML =
           '<p class="ro-kicker">Board status</p>' +
           '<h2>Freese Index</h2>' +
           `<p class="ro-role">${note}</p>` +
-          '<p class="ro-blurb">Cork wall, sticky notes, red yarn. Browse freely, or Edit to post notes and yarn. Links on a note appear here when selected. Share view-only copies a guest URL. Use Panels to hide chrome.</p>' +
+          '<p class="ro-blurb">Cork wall, sticky notes, red yarn. Browse freely, or Edit to post notes and yarn. Select a note to jump affiliations, trace yarn, or temporarily measure hops from someone other than Josh.</p>' +
           '<div class="ro-legend">' +
           `<span><i style="background:${TYPES.pink.color}"></i>Pink</span>` +
           `<span><i style="background:${TYPES.yellow.color}"></i>Yellow</span>` +
@@ -2075,9 +2293,11 @@ if (typeof document !== 'undefined') {
           `<span><i style="background:${TYPES.green.color}"></i>Green</span>` +
           '</div>' +
           (ui.hopColor
-            ? '<p class="ro-hint">Hop colors overlay note paper by distance from Josh Freese.</p>'
+            ? `<p class="ro-hint">Hop colors overlay note paper by distance from ${escapeHtml(hub)}.</p>`
             : '') +
+          exploreBoardHtml() +
           '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit (move / add / yarn) \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>Esc</kbd> clear</p>';
+        bindReadout(null);
         return;
       }
       const n = byId.get(id);
@@ -2085,11 +2305,21 @@ if (typeof document !== 'undefined') {
       const type = TYPES[n.type] || TYPES.yellow;
       const links = neighborButtons(id);
       const connections = connectionLines(id);
-      const affiliations = freezeConnectedAffiliations(n, graphModel);
       const counts = n.neighbors.length;
       const pathDetails = freezePathSummary(n, graphModel, ui.path);
       const attachments = Array.isArray(n.attachments) ? n.attachments.filter((a) => a && (a.url || a.label)) : [];
       const hops = hopDistanceFor(id);
+      const hub = hubDisplayName();
+      const pathTarget = pathTargetNode();
+      const pathTitle = `Jumps to ${pathTarget ? pathTarget.name : hub}`;
+      const hopLabel = hops === 0
+        ? `${hub} hub`
+        : hops >= 99
+          ? 'Unlinked'
+          : hops + ' hop' + (hops === 1 ? '' : 's') + ' from ' + hub;
+      const wikiUrl = freezeWikipediaSearchUrl(n.name);
+      const isHub = !!(hubNode() && freezeNodeId(hubNode()) === id);
+      const tracing = !!(ui.traceTargetId && byId.has(ui.traceTargetId));
 
       readout.innerHTML =
         (ui.editing
@@ -2102,10 +2332,9 @@ if (typeof document !== 'undefined') {
         `<p class="ro-role">${escapeHtml(n.role || '')}</p>` +
         `<span class="typechip"><i style="background:${type.color}"></i>${escapeHtml(type.label)}</span>` +
         (ui.hopColor
-          ? `<span class="ro-hopchip"><i style="background:${freezeHopPaper(hops)}"></i>${hops === 0 ? 'Josh hub' : hops >= 99 ? 'Unlinked' : hops + ' hop' + (hops === 1 ? '' : 's') + ' from Josh'}</span>`
+          ? `<span class="ro-hopchip"><i style="background:${freezeHopPaper(hops)}"></i>${escapeHtml(hopLabel)}</span>`
           : '') +
         `<p class="ro-blurb">${escapeHtml(n.blurb || '')}</p>` +
-        (affiliations ? `<p class="ro-affil">Affiliations: ${escapeHtml(affiliations)}</p>` : '') +
         (attachments.length
           ? '<ul class="ro-attachments" aria-label="Attachments">' +
             attachments.map((a) => {
@@ -2120,41 +2349,50 @@ if (typeof document !== 'undefined') {
         `<div class="cell"><b>${counts}</b><span>strings</span></div>` +
         `<div class="cell"><b>${links.length}</b><span>related</span></div>` +
         '</div>' +
-        (connections.length
-          ? '<ul class="ro-connections" aria-label="Direct connections">' +
-            connections.slice(0, 8).map((c) =>
-              `<li class="ro-conn-row"><span class="ro-conn-text">${escapeHtml(c.text)}</span>` +
-              (ui.editing
-                ? `<button type="button" class="btn btn-ghost btn-tiny" data-edit-edge="${escapeHtml(c.edge.id)}">Edit label</button>`
-                : '') +
-              '</li>'
-            ).join('') +
-            '</ul>'
-          : '') +
-        (links.length
-          ? '<div class="ro-links" aria-label="Related subjects">' +
-            links.slice(0, 9).map((l) => `<button class="ro-link" type="button" data-go="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
-            '</div>'
-          : '') +
-        '<section class="ro-path" data-freeze-path-section="true" aria-label="Path to Josh Freese">' +
-        '<p class="ro-path-title">Path to Josh Freese</p>' +
+        '<section class="ro-path" data-freeze-path-section="true" aria-label="' + escapeHtml(pathTitle) + '">' +
+        `<p class="ro-path-title">${escapeHtml(pathTitle)}</p>` +
         `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
         (pathDetails.hops.length
           ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
           : '') +
         '</section>' +
+        (links.length
+          ? '<div class="ro-links" aria-label="Affiliations">' +
+            links.map((l) => `<button class="ro-link" type="button" data-go="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
+            '</div>'
+          : '') +
+        (ui.editing && connections.length
+          ? '<ul class="ro-connections" aria-label="Edit yarn labels">' +
+            connections.map((c) =>
+              `<li class="ro-conn-row"><span class="ro-conn-text">${escapeHtml(c.text)}</span>` +
+              `<button type="button" class="btn btn-ghost btn-tiny" data-edit-edge="${escapeHtml(c.edge.id)}">Edit label</button>` +
+              '</li>'
+            ).join('') +
+            '</ul>'
+          : '') +
+        '<div class="ro-tools">' +
+        (wikiUrl
+          ? `<a class="ro-link" href="${escapeHtml(wikiUrl)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+          : '') +
+        (isHub
+          ? ''
+          : `<button type="button" class="ro-link" data-set-hub>See hops from ${escapeHtml(n.name)}</button>`) +
+        (hubIsJosh()
+          ? ''
+          : '<button type="button" class="ro-link" data-reset-hub>Reset hub to Josh</button>') +
+        (tracing
+          ? '<button type="button" class="ro-link" data-clear-trace>Clear traced path</button>'
+          : '') +
+        '</div>' +
+        '<div class="ro-trace">' +
+        '<label for="ro-trace-input">Trace yarn to another subject</label>' +
+        '<input id="ro-trace-input" type="search" autocomplete="off" spellcheck="false" placeholder="Name of a person, band, or project">' +
+        '<ul id="ro-trace-results" class="ro-trace-results" aria-label="Trace matches"></ul>' +
+        '</div>' +
         (ui.editing
           ? ''
           : '<p class="ro-hint">Edits auto-save in this browser only. Save board bookmarks a checkpoint. Share view-only is always the public board.</p>');
-      for (const b of readout.querySelectorAll('[data-go]')) {
-        b.addEventListener('click', () => selectNode(b.getAttribute('data-go')));
-      }
-      for (const b of readout.querySelectorAll('[data-edit]')) {
-        b.addEventListener('click', () => handleEditAction(b.getAttribute('data-edit'), id));
-      }
-      for (const b of readout.querySelectorAll('[data-edit-edge]')) {
-        b.addEventListener('click', () => openEdgeModal(b.getAttribute('data-edit-edge')));
-      }
+      bindReadout(id);
     }
 
     /* ================= toast ================= */
@@ -2949,6 +3187,7 @@ if (typeof document !== 'undefined') {
       if (!hopBtn) return;
       hopBtn.setAttribute('aria-checked', String(!!ui.hopColor));
       hopBtn.classList.toggle('on', !!ui.hopColor);
+      hopBtn.setAttribute('aria-label', `Color stickies by hops from ${hubDisplayName()}`);
     }
 
     function setHopColor(on) {
@@ -2957,7 +3196,7 @@ if (typeof document !== 'undefined') {
       syncHopColorToggleUi();
       applyHopColorsToDom();
       updateReadout(ui.selected);
-      showToast(ui.hopColor ? 'Stickies colored by hops from Josh.' : 'Sticky paper colors restored.');
+      showToast(ui.hopColor ? `Stickies colored by hops from ${hubDisplayName()}.` : 'Sticky paper colors restored.');
     }
 
     function toggleHopColor() {
@@ -3926,5 +4165,9 @@ if (typeof module !== 'undefined' && module.exports) {
     freezeResolveNode,
     freezeDescribeHop,
     freezeHighlightPath,
+    freezeJoshNode,
+    freezeWikipediaSearchUrl,
+    freezeDegreeRanks,
+    freezeBusyYarn,
   };
 }
