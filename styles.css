@@ -138,6 +138,36 @@ body {
   pointer-events: none;
   overflow: hidden;
 }
+body.alt-hub .topbar-center {
+  overflow: visible;
+  max-width: min(58vw, 380px);
+}
+body.alt-hub .topbar { min-height: 84px; }
+body.alt-hub .board-sub { display: none; }
+
+.btn-reset-hub {
+  pointer-events: auto;
+  display: none;
+  margin: 6px auto 0;
+  padding: 9px 22px;
+  font: 800 13px/1.15 var(--font-ui);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #fffdf6;
+  background: linear-gradient(180deg, #e53935, #c62828);
+  border: 1px solid #8a2e28;
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(28, 16, 6, 0.35);
+  white-space: nowrap;
+}
+.btn-reset-hub:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-reset-hub:hover {
+  background: linear-gradient(180deg, #ef5350, #d32f2f);
+}
 
 .board-title {
   margin: 0;
@@ -1205,6 +1235,18 @@ body.interactive-drag .node { cursor: grabbing; }
   font-family: var(--font-ui);
 }
 .ro-link:hover { background: rgba(198, 40, 40, 0.16); }
+.ro-link-wiki {
+  color: #1e4a28;
+  background: rgba(46, 125, 58, 0.12);
+  border-color: rgba(46, 125, 58, 0.45);
+}
+.ro-link-wiki:hover { background: rgba(46, 125, 58, 0.22); }
+.ro-link-hub {
+  color: #143a62;
+  background: rgba(30, 106, 176, 0.12);
+  border-color: rgba(30, 106, 176, 0.45);
+}
+.ro-link-hub:hover { background: rgba(30, 106, 176, 0.22); }
 
 .ro-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .ro-legend span {
@@ -1448,7 +1490,14 @@ body.interactive-drag .node { cursor: grabbing; }
 
 @media (max-width: 620px) {
   .topbar { padding: 8px 10px; min-height: 54px; gap: 6px; }
+  body.alt-hub .topbar { min-height: 76px; }
   .topbar-center { max-width: min(44vw, 168px); }
+  body.alt-hub .topbar-center { max-width: min(56vw, 240px); }
+  .btn-reset-hub {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    padding: 8px 12px;
+  }
   .board-title { font-size: 15px; letter-spacing: 0.06em; text-indent: 0.06em; }
   .toggle-label { display: none; }
   /* Keep Panels readable — unlabeled toggles made "hide shit" undiscoverable */

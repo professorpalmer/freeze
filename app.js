@@ -2105,6 +2105,7 @@ if (typeof document !== 'undefined') {
       hopDistCache = null;
       applyHopColorsToDom();
       syncHopColorToggleUi();
+      syncHubResetUi();
       if (ui.selected && byId.has(ui.selected)) {
         setPathForNode(ui.selected);
         updateReadout(ui.selected);
@@ -2221,9 +2222,6 @@ if (typeof document !== 'undefined') {
           : '<li>No yarn paths to this hub.</li>') +
         '</ol>' +
         `<p class="ro-hint">Color by hops is the distance heatmap from ${escapeHtml(hub)}. Wikipedia opens from a selected note \u2014 no URLs to paste.</p>` +
-        (hubIsJosh()
-          ? ''
-          : '<div class="ro-tools"><button type="button" class="ro-link" data-reset-hub>Reset hub to Josh Freese</button></div>') +
         '</section>';
     }
 
@@ -2265,8 +2263,6 @@ if (typeof document !== 'undefined') {
       }
       const setHubBtn = readout.querySelector('[data-set-hub]');
       if (setHubBtn) setHubBtn.addEventListener('click', () => setHub(id));
-      const resetHubBtn = readout.querySelector('[data-reset-hub]');
-      if (resetHubBtn) resetHubBtn.addEventListener('click', () => setHub(freezeJoshId()));
       const clearTraceBtn = readout.querySelector('[data-clear-trace]');
       if (clearTraceBtn) clearTraceBtn.addEventListener('click', () => setTraceTarget(null));
       if (id) bindTraceSearch(id);
@@ -2372,14 +2368,11 @@ if (typeof document !== 'undefined') {
           : '') +
         '<div class="ro-tools">' +
         (wikiUrl
-          ? `<a class="ro-link" href="${escapeHtml(wikiUrl)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+          ? `<a class="ro-link ro-link-wiki" href="${escapeHtml(wikiUrl)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
           : '') +
         (isHub
           ? ''
-          : `<button type="button" class="ro-link" data-set-hub>See hops from ${escapeHtml(n.name)}</button>`) +
-        (hubIsJosh()
-          ? ''
-          : '<button type="button" class="ro-link" data-reset-hub>Reset hub to Josh</button>') +
+          : `<button type="button" class="ro-link ro-link-hub" data-set-hub>See hops from ${escapeHtml(n.name)}</button>`) +
         (tracing
           ? '<button type="button" class="ro-link" data-clear-trace>Clear traced path</button>'
           : '') +
@@ -3190,6 +3183,17 @@ if (typeof document !== 'undefined') {
       hopBtn.setAttribute('aria-label', `Color stickies by hops from ${hubDisplayName()}`);
     }
 
+    function syncHubResetUi() {
+      const alt = !hubIsJosh();
+      document.body.classList.toggle('alt-hub', alt);
+      const btn = document.getElementById('btn-reset-hub');
+      if (!btn) return;
+      btn.hidden = !alt;
+      const hub = hubDisplayName();
+      btn.setAttribute('aria-label', alt ? `Reset hops and paths from ${hub} to Josh Freese` : 'Reset to Josh');
+      btn.title = alt ? `Hops are from ${hub}. Click to measure from Josh again.` : '';
+    }
+
     function setHopColor(on) {
       ui.hopColor = !!on;
       freezeWriteHopColorPref(ui.hopColor);
@@ -3821,6 +3825,8 @@ if (typeof document !== 'undefined') {
     if (pngBtn) pngBtn.addEventListener('click', exportBoardPng);
     const hopBtn = document.getElementById('btn-hop-color');
     if (hopBtn) hopBtn.addEventListener('click', toggleHopColor);
+    const resetHubBtn = document.getElementById('btn-reset-hub');
+    if (resetHubBtn) resetHubBtn.addEventListener('click', () => setHub(freezeJoshId()));
     const layoutBtn = document.getElementById('btn-layout');
     if (layoutBtn) layoutBtn.addEventListener('click', toggleLayoutMode);
     const suggestBtn = document.getElementById('btn-suggest');
@@ -4068,6 +4074,7 @@ if (typeof document !== 'undefined') {
     rebuildHopDistances();
     applyHopColorsToDom();
     syncHopColorToggleUi();
+    syncHubResetUi();
     syncLayoutToggleUi();
 
     const guestCamera = !!(ui.viewOnly || ui.shared);
