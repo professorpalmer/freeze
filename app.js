@@ -1048,6 +1048,8 @@ if (typeof document !== 'undefined') {
     let tradLayoutSnapshot = null; // when Auto sort is on, traditional x/y live here
     let hopDistCache = null; // Map<nodeId, hops>
     let editingEdgeId = null;
+    let pathRevealCount = 0;
+    let pathRevealTimer = null;
 
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const NODE_DRAW_ORDER = { subject: 0, project: 1, band: 2, person: 3, pink: 4, yellow: 5, green: 6, blue: 7 };
@@ -1147,7 +1149,81 @@ if (typeof document !== 'undefined') {
     }
 
     function pathEdgeIdSet() {
-      return new Set((ui.path && ui.path.edges ? ui.path.edges : []).map((e) => e.id).filter(Boolean));
+      const path = revealedPath();
+      return new Set((path && path.edges ? path.edges : []).map((e) => e.id).filter(Boolean));
+    }
+
+    function prefersReducedMotion() {
+      return typeof window !== 'undefined'
+        && window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    function revealedPath() {
+      if (!ui.path) return null;
+      const edges = ui.path.edges || [];
+      if (pathRevealCount >= edges.length) return ui.path;
+      return {
+        target: ui.path.target,
+        disconnected: ui.path.disconnected,
+        edges: edges.slice(0, pathRevealCount),
+        nodes: (ui.path.nodes || []).slice(0, pathRevealCount + 1),
+      };
+    }
+
+    function pathRevealDelay(hopCount) {
+      if (hopCount <= 8) return 56;
+      return Math.max(28, Math.round(480 / hopCount));
+    }
+
+    function cancelPathReveal() {
+      if (pathRevealTimer) {
+        clearTimeout(pathRevealTimer);
+        pathRevealTimer = null;
+      }
+    }
+
+    function applyPathNodeClasses(path) {
+      const revealed = new Set((path && path.nodes ? path.nodes : []).map(freezeNodeId));
+      for (const [nid, g] of nodeEls) {
+        const onPath = revealed.has(nid);
+        g.classList.toggle('on-path', onPath);
+        if (onPath) g.setAttribute('data-shortest-path-node', 'true');
+        else g.removeAttribute('data-shortest-path-node');
+      }
+    }
+
+    function paintRevealedPath() {
+      const path = revealedPath();
+      applyPathNodeClasses(path);
+      renderPathAccent();
+      applyLabelHighlights();
+      scheduleFrame({ lodPaint: true });
+    }
+
+    function startPathReveal() {
+      cancelPathReveal();
+      const edges = (ui.path && ui.path.edges) || [];
+      if (!edges.length || prefersReducedMotion()) {
+        pathRevealCount = edges.length;
+        paintRevealedPath();
+        return;
+      }
+      pathRevealCount = 1;
+      paintRevealedPath();
+      if (pathRevealCount >= edges.length) return;
+      const delay = pathRevealDelay(edges.length);
+      const tick = () => {
+        pathRevealCount += 1;
+        paintRevealedPath();
+        if (pathRevealCount < edges.length) {
+          pathRevealTimer = setTimeout(tick, delay);
+        } else {
+          pathRevealTimer = null;
+          renderEdges();
+        }
+      };
+      pathRevealTimer = setTimeout(tick, delay);
     }
 
     function incidentEdgeIdSet(nodeId) {
@@ -1761,14 +1837,15 @@ if (typeof document !== 'undefined') {
 
     function renderPathAccent() {
       if (!pathAccent) return;
-      pathAccent.setAttribute('d', freezeHighlightPath(graphModel, ui.path || { edges: [] }));
+      pathAccent.setAttribute('d', freezeHighlightPath(graphModel, revealedPath() || { edges: [] }));
     }
 
     function renderLabels() {
       labelsG.textContent = '';
       if (isFarLod()) return; // canvas owns readable names when zoomed out
       // At board scale, only label the active star + Freese path — never all 700+ strings.
-      const pathEdgeIds = new Set((ui.path && ui.path.edges ? ui.path.edges : []).map((e) => e.id).filter(Boolean));
+      const shown = revealedPath();
+      const pathEdgeIds = new Set((shown && shown.edges ? shown.edges : []).map((e) => e.id).filter(Boolean));
       const activeId = ui.active;
       const relevant = EDGES.filter((e) => {
         if (pathEdgeIds.has(e.id)) return true;
@@ -2129,14 +2206,7 @@ if (typeof document !== 'undefined') {
       const node = id ? byId.get(id) : null;
       const target = pathTargetNode();
       ui.path = node ? freezeShortestPath(graphModel, node, target) : null;
-      for (const [nid, g] of nodeEls) {
-        const onPath = !!(ui.path && ui.path.nodes && ui.path.nodes.some((n) => freezeNodeId(n) === nid));
-        g.classList.toggle('on-path', onPath);
-        if (onPath) g.setAttribute('data-shortest-path-node', 'true');
-        else g.removeAttribute('data-shortest-path-node');
-      }
-      renderPathAccent();
-      applyLabelHighlights();
+      startPathReveal();
     }
 
     function selectNode(id, { fromList = false } = {}) {
@@ -2159,6 +2229,8 @@ if (typeof document !== 'undefined') {
       ui.hovered = null;
       ui.path = null;
       ui.traceTargetId = null;
+      cancelPathReveal();
+      pathRevealCount = 0;
       for (const g of nodeEls.values()) {
         g.classList.remove('sel');
         g.classList.remove('on-path');
