@@ -138,35 +138,29 @@ body {
   pointer-events: none;
   overflow: hidden;
 }
-body.hub-chrome .topbar-center {
-  overflow: visible;
-  max-width: min(62vw, 440px);
-}
-body.hub-chrome .topbar { min-height: 84px; }
-body.hub-chrome .board-sub { display: none; }
 
 .hub-actions {
-  pointer-events: auto;
-  display: none;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
   gap: 6px;
-  margin: 6px auto 0;
+  min-width: 0;
+  max-width: 100%;
 }
-body.hub-chrome .hub-actions { display: flex; }
 
 .btn-set-hub,
 .btn-reset-hub {
   pointer-events: auto;
   display: none;
-  padding: 9px 18px;
-  font: 800 12px/1.15 var(--font-ui);
-  letter-spacing: 0.12em;
+  padding: 6px 10px;
+  font: 800 11px/1.15 var(--font-ui);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   border-radius: 3px;
-  box-shadow: 0 2px 8px rgba(28, 16, 6, 0.35);
+  box-shadow: 0 1px 4px rgba(28, 16, 6, 0.28);
   white-space: nowrap;
-  max-width: min(52vw, 360px);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1508,14 +1502,12 @@ body.interactive-drag .node { cursor: grabbing; }
 
 @media (max-width: 620px) {
   .topbar { padding: 8px 10px; min-height: 54px; gap: 6px; }
-  body.hub-chrome .topbar { min-height: 76px; }
   .topbar-center { max-width: min(44vw, 168px); }
-  body.hub-chrome .topbar-center { max-width: min(62vw, 280px); }
   .btn-set-hub,
   .btn-reset-hub {
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    padding: 8px 12px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    padding: 5px 8px;
   }
   .board-title { font-size: 15px; letter-spacing: 0.06em; text-indent: 0.06em; }
   .toggle-label { display: none; }

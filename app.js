@@ -3258,7 +3258,6 @@ if (typeof document !== 'undefined') {
       const selected = ui.selected && byId.has(ui.selected) ? byId.get(ui.selected) : null;
       const selectedIsHub = !!(selected && hubNode() && freezeNodeId(selected) === freezeNodeId(hubNode()));
       const showSet = !!(selected && !selectedIsHub);
-      document.body.classList.toggle('hub-chrome', alt || showSet);
 
       const setBtn = document.getElementById('btn-set-hub');
       if (setBtn) {
