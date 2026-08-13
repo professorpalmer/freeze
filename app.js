@@ -2147,6 +2147,7 @@ if (typeof document !== 'undefined') {
       setPathForNode(id);
       setActive(id);
       updateReadout(id);
+      syncHubResetUi();
       if (fromList) {
         showToast(`Selected ${byId.get(id).name}.`);
         svg.focus({ preventScroll: true });
@@ -2166,6 +2167,7 @@ if (typeof document !== 'undefined') {
       if (pathAccent) pathAccent.setAttribute('d', '');
       setActive(null);
       updateReadout(null);
+      syncHubResetUi();
     }
 
     function neighborButtons(id) {
@@ -2261,8 +2263,6 @@ if (typeof document !== 'undefined') {
       for (const b of readout.querySelectorAll('[data-edit-edge]')) {
         b.addEventListener('click', () => openEdgeModal(b.getAttribute('data-edit-edge')));
       }
-      const setHubBtn = readout.querySelector('[data-set-hub]');
-      if (setHubBtn) setHubBtn.addEventListener('click', () => setHub(id));
       const clearTraceBtn = readout.querySelector('[data-clear-trace]');
       if (clearTraceBtn) clearTraceBtn.addEventListener('click', () => setTraceTarget(null));
       if (id) bindTraceSearch(id);
@@ -2314,7 +2314,6 @@ if (typeof document !== 'undefined') {
           ? 'Unlinked'
           : hops + ' hop' + (hops === 1 ? '' : 's') + ' from ' + hub;
       const wikiUrl = freezeWikipediaSearchUrl(n.name);
-      const isHub = !!(hubNode() && freezeNodeId(hubNode()) === id);
       const tracing = !!(ui.traceTargetId && byId.has(ui.traceTargetId));
 
       readout.innerHTML =
@@ -2366,17 +2365,16 @@ if (typeof document !== 'undefined') {
             ).join('') +
             '</ul>'
           : '') +
-        '<div class="ro-tools">' +
-        (wikiUrl
-          ? `<a class="ro-link ro-link-wiki" href="${escapeHtml(wikiUrl)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+        (wikiUrl || tracing
+          ? '<div class="ro-tools">' +
+            (wikiUrl
+              ? `<a class="ro-link ro-link-wiki" href="${escapeHtml(wikiUrl)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>`
+              : '') +
+            (tracing
+              ? '<button type="button" class="ro-link" data-clear-trace>Clear traced path</button>'
+              : '') +
+            '</div>'
           : '') +
-        (isHub
-          ? ''
-          : `<button type="button" class="ro-link ro-link-hub" data-set-hub>See hops from ${escapeHtml(n.name)}</button>`) +
-        (tracing
-          ? '<button type="button" class="ro-link" data-clear-trace>Clear traced path</button>'
-          : '') +
-        '</div>' +
         '<div class="ro-trace">' +
         '<label for="ro-trace-input">Trace yarn to another subject</label>' +
         '<input id="ro-trace-input" type="search" autocomplete="off" spellcheck="false" placeholder="Name of a person, band, or project">' +
@@ -3185,13 +3183,29 @@ if (typeof document !== 'undefined') {
 
     function syncHubResetUi() {
       const alt = !hubIsJosh();
-      document.body.classList.toggle('alt-hub', alt);
-      const btn = document.getElementById('btn-reset-hub');
-      if (!btn) return;
-      btn.hidden = !alt;
-      const hub = hubDisplayName();
-      btn.setAttribute('aria-label', alt ? `Reset hops and paths from ${hub} to Josh Freese` : 'Reset to Josh');
-      btn.title = alt ? `Hops are from ${hub}. Click to measure from Josh again.` : '';
+      const selected = ui.selected && byId.has(ui.selected) ? byId.get(ui.selected) : null;
+      const selectedIsHub = !!(selected && hubNode() && freezeNodeId(selected) === freezeNodeId(hubNode()));
+      const showSet = !!(selected && !selectedIsHub);
+      document.body.classList.toggle('hub-chrome', alt || showSet);
+
+      const setBtn = document.getElementById('btn-set-hub');
+      if (setBtn) {
+        setBtn.hidden = !showSet;
+        if (showSet) {
+          const label = `See hops from ${selected.name}`;
+          setBtn.textContent = label;
+          setBtn.setAttribute('aria-label', label);
+          setBtn.title = `Temporarily measure separation from ${selected.name}`;
+        }
+      }
+
+      const resetBtn = document.getElementById('btn-reset-hub');
+      if (resetBtn) {
+        resetBtn.hidden = !alt;
+        const hub = hubDisplayName();
+        resetBtn.setAttribute('aria-label', alt ? `Reset hops and paths from ${hub} to Josh Freese` : 'Reset to Josh');
+        resetBtn.title = alt ? `Hops are from ${hub}. Click to measure from Josh again.` : '';
+      }
     }
 
     function setHopColor(on) {
@@ -3825,6 +3839,12 @@ if (typeof document !== 'undefined') {
     if (pngBtn) pngBtn.addEventListener('click', exportBoardPng);
     const hopBtn = document.getElementById('btn-hop-color');
     if (hopBtn) hopBtn.addEventListener('click', toggleHopColor);
+    const setHubBtn = document.getElementById('btn-set-hub');
+    if (setHubBtn) {
+      setHubBtn.addEventListener('click', () => {
+        if (ui.selected) setHub(ui.selected);
+      });
+    }
     const resetHubBtn = document.getElementById('btn-reset-hub');
     if (resetHubBtn) resetHubBtn.addEventListener('click', () => setHub(freezeJoshId()));
     const layoutBtn = document.getElementById('btn-layout');
