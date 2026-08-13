@@ -2738,7 +2738,7 @@ if (typeof document !== 'undefined') {
         const label = chromeBtn.querySelector('.toggle-label');
         if (label) label.textContent = ui.chromeVisible ? 'Panels' : 'Show UI';
       }
-      showToast(ui.chromeVisible ? 'Panels shown.' : 'Board clear — tap Show UI for search / info.');
+      showToast(ui.chromeVisible ? 'Panels shown.' : 'Board clear — search stays; tap Show UI for info / save.');
     }
 
     function toggleDim() {
@@ -3258,15 +3258,19 @@ if (typeof document !== 'undefined') {
       const selected = ui.selected && byId.has(ui.selected) ? byId.get(ui.selected) : null;
       const selectedIsHub = !!(selected && hubNode() && freezeNodeId(selected) === freezeNodeId(hubNode()));
       const showSet = !!(selected && !selectedIsHub);
+      const phone = document.body.classList.contains('mobile-light');
+      document.body.classList.toggle('hub-chips', !!(showSet || alt));
 
       const setBtn = document.getElementById('btn-set-hub');
       if (setBtn) {
         setBtn.hidden = !showSet;
         if (showSet) {
-          const label = `See hops from ${selected.name}`;
+          const name = String(selected.name || '');
+          const short = name.length > 22 ? name.slice(0, 21) + '…' : name;
+          const label = phone ? `Hops: ${short}` : `See hops from ${name}`;
           setBtn.textContent = label;
-          setBtn.setAttribute('aria-label', label);
-          setBtn.title = `Temporarily measure separation from ${selected.name}`;
+          setBtn.setAttribute('aria-label', `See hops from ${name}`);
+          setBtn.title = `Temporarily measure separation from ${name}`;
         }
       }
 
@@ -3274,6 +3278,7 @@ if (typeof document !== 'undefined') {
       if (resetBtn) {
         resetBtn.hidden = !alt;
         const hub = hubDisplayName();
+        resetBtn.textContent = phone ? 'Josh' : 'Reset to Josh';
         resetBtn.setAttribute('aria-label', alt ? `Reset hops and paths from ${hub} to Josh Freese` : 'Reset to Josh');
         resetBtn.title = alt ? `Hops are from ${hub}. Click to measure from Josh again.` : '';
       }
@@ -4197,7 +4202,7 @@ if (typeof document !== 'undefined') {
     showToast(ui.viewOnly
       ? 'View-only board — pan, deep-zoom, and search. Editing is off.'
       : (MOBILE_LIGHT
-        ? 'Board clear for mobile — tap Show UI (top right) for search / info / save.'
+        ? 'Board clear for mobile — search is up top. Tap Show UI for info / save.'
         : 'Tip: Add note to post. Share board copies a view-only URL for friends.'));
 
     window.__freezeIndexBoard = {

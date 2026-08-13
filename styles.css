@@ -128,10 +128,14 @@ body {
   display: flex;
   align-items: center;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   justify-self: start;
 }
 
 .topbar-center {
+  position: relative;
+  z-index: 2;
   text-align: center;
   min-width: 0;
   max-width: min(52vw, 320px);
@@ -160,6 +164,7 @@ body {
   border-radius: 3px;
   box-shadow: 0 1px 4px rgba(28, 16, 6, 0.28);
   white-space: nowrap;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -495,6 +500,83 @@ body.chrome-collapsed.mobile-light #btn-chrome .toggle-label {
 }
 body.mobile-light .node .note {
   animation: none !important;
+}
+
+/* Phones: one-row header. Hub chips and extras leave the title grid. */
+body.mobile-light .topbar {
+  min-height: 54px;
+  max-height: 54px;
+  overflow: hidden;
+  padding: 8px 10px;
+}
+body.mobile-light .topbar-center {
+  max-width: none;
+}
+body.mobile-light .topbar-right {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+body.mobile-light.view-only .topbar-right > :not(#btn-chrome),
+body.mobile-light:not(.view-only) .topbar-right > :not(#btn-chrome):not(#btn-mode) {
+  display: none !important;
+}
+body.mobile-light .hub-actions {
+  position: fixed;
+  top: 60px;
+  left: 8px;
+  right: 8px;
+  z-index: 28;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  max-width: none;
+  overflow: visible;
+  pointer-events: none;
+}
+body.mobile-light .hub-actions .btn-set-hub,
+body.mobile-light .hub-actions .btn-reset-hub {
+  pointer-events: auto;
+  max-width: min(92vw, 280px);
+}
+body.mobile-light .freeze-search {
+  top: 60px;
+  left: 8px;
+  right: 8px;
+  width: auto;
+  z-index: 29;
+}
+body.mobile-light.hub-chips .freeze-search {
+  top: 102px;
+}
+body.mobile-light.chrome-collapsed .freeze-search {
+  display: flex !important;
+  flex-direction: column;
+  padding: 8px 10px;
+}
+body.mobile-light.chrome-collapsed .freeze-search::before,
+body.mobile-light.chrome-collapsed .freeze-search label,
+body.mobile-light.chrome-collapsed .freeze-search .freeze-search-count,
+body.mobile-light.chrome-collapsed .freeze-search .freeze-search-empty {
+  display: none;
+}
+body.mobile-light:not(.chrome-collapsed).view-only #btn-suggest {
+  position: fixed !important;
+  display: inline-flex !important;
+  top: 60px;
+  right: 8px;
+  left: auto;
+  z-index: 28;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+body.mobile-light.hub-chips:not(.chrome-collapsed).view-only #btn-suggest {
+  top: 60px;
+}
+body.mobile-light.view-only:not(.chrome-collapsed) .hub-actions {
+  right: 118px;
+}
+body.mobile-light.view-only:not(.chrome-collapsed):not(.hub-chips) .freeze-search {
+  right: 118px;
 }
 
 /* Add-note modal */
