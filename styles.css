@@ -12,7 +12,7 @@
   --yarn-bright: #e53935;
   --yarn-dim: rgba(180, 40, 35, 0.22);
   --yarn-selected: #1e6ab0;
-  --yarn-path: #2e7d3a;
+  --yarn-path: var(--yarn-bright);
   --ink: #1c1610;
   --ink-soft: #3d3428;
   --paper: #f7f1e1;
@@ -788,7 +788,7 @@ body.has-active .strings-active { opacity: 0.95; }
   pointer-events: none;
 }
 body.has-active .strings-path { opacity: 0.98; }
-.edge-label.path-hl { fill: #1e5a28; }
+.edge-label.path-hl { fill: #8a2e28; }
 .edge-label.hl:not(.path-hl) { fill: #1a4a78; }
 
 body.has-active .strings-tier-related { opacity: 0.22; }
@@ -847,7 +847,7 @@ body.lod-compact .lod-canvas { opacity: 1; }
   pointer-events: none;
 }
 .edge-label.hl { fill: #1a4a78; opacity: 1; }
-.edge-label.path-hl { fill: #1e5a28; opacity: 1; }
+.edge-label.path-hl { fill: #8a2e28; opacity: 1; }
 body.has-active .edge-label { opacity: 0.06; }
 body.has-active .edge-label.hl,
 body.has-active .edge-label.path-hl { opacity: 1; }
