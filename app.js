@@ -1554,7 +1554,7 @@ if (typeof document !== 'undefined') {
         strokeEdgeList(style.list, style.stroke, style.width, skipHighlight);
       }
 
-      // Selected / active incident yarn — blue; path yarn — bright red (on top).
+      // Selected / active incident yarn — blue; path to Josh — green (on top).
       if (incidentIds.size) {
         const incident = EDGES.filter((e) => incidentIds.has(e.id) && !pathIds.has(e.id));
         strokeEdgeList(
@@ -1568,7 +1568,7 @@ if (typeof document !== 'undefined') {
         const pathEdges = EDGES.filter((e) => pathIds.has(e.id));
         strokeEdgeList(
           pathEdges,
-          dimmed ? 'rgba(229, 57, 53, 0.4)' : 'rgba(229, 57, 53, 0.95)',
+          dimmed ? 'rgba(46, 125, 58, 0.4)' : 'rgba(46, 125, 58, 0.95)',
           cosmos ? 2.5 : 2.9,
           null
         );
@@ -1824,7 +1824,7 @@ if (typeof document !== 'undefined') {
       const incidentIds = incidentEdgeIdSet(activeId);
       const skipBulk = new Set([...pathIds, ...incidentIds]);
       // Near LOD: SVG yarn, viewport-culled. Far LOD: canvas owns the bulk web.
-      // Bulk = red; selected incident = blue; path yarn = bright red.
+      // Bulk = red; selected incident = blue; path to Josh = green.
       if (edgesCorePath) edgesCorePath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('core'), rect, skipBulk));
       if (edgesStrongPath) edgesStrongPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('strong'), rect, skipBulk));
       edgesPath.setAttribute('d', isFarLod() ? '' : edgePathData(edgesByTier('related'), rect, skipBulk));
