@@ -314,6 +314,252 @@ function freezeShortestPath(model, start, target) {
   };
 }
 
+const FREESE_LOOSE_END_DEGREE = 5;
+const FREESE_MAX_SHORTEST_PATHS = 16;
+const FREESE_CLEARANCE_ORIGIN = 200;
+const FREESE_CLEARANCE_FLOOR = 36;
+const FREESE_CLEARANCE_CAP = 200;
+
+function freezeNodeClearance(hops, degree) {
+  if (hops === 0) return FREESE_CLEARANCE_ORIGIN;
+  const deg = Number.isFinite(degree) ? degree : 0;
+  const dist = Number.isFinite(hops) ? hops : 99;
+  return Math.min(
+    FREESE_CLEARANCE_CAP,
+    Math.max(FREESE_CLEARANCE_FLOOR, 100 - dist * 10 + deg * 2)
+  );
+}
+
+function freezeLowAccessNodes(model, threshold) {
+  const cut = Number.isFinite(threshold) ? threshold : FREESE_LOOSE_END_DEGREE;
+  if (!model || !Array.isArray(model.nodes)) return [];
+  const josh = freezeJoshNode(model);
+  const joshId = josh ? freezeNodeId(josh) : freezeJoshId();
+  return model.nodes.map((node) => {
+    const id = freezeNodeId(node);
+    return {
+      id,
+      name: freezeNodeName(node),
+      degree: (model.adjacency.get(id) || []).length,
+    };
+  }).filter((row) => row.id && row.id !== joshId && row.degree < cut)
+    .sort((a, b) => a.degree - b.degree || a.name.localeCompare(b.name));
+}
+
+function freezeAllShortestPaths(model, start, target) {
+  const hub = target != null
+    ? freezeResolveNode(target, model)
+    : freezeJoshNode(model);
+  if (!start || !hub) return [];
+  const startId = freezeNodeId(start);
+  const targetId = freezeNodeId(hub);
+  if (startId === targetId) {
+    return [{ target: hub, nodes: [start], edges: [], disconnected: false }];
+  }
+
+  const dist = new Map([[startId, 0]]);
+  const parents = new Map();
+  const queue = [startId];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    const here = dist.get(current);
+    (model.adjacency.get(current) || []).forEach(({ id, edge }) => {
+      if (!dist.has(id)) {
+        dist.set(id, here + 1);
+        parents.set(id, [{ parentId: current, edge }]);
+        queue.push(id);
+        return;
+      }
+      if (dist.get(id) === here + 1) {
+        parents.get(id).push({ parentId: current, edge });
+      }
+    });
+  }
+
+  if (!dist.has(targetId)) {
+    return [{ target: hub, nodes: [start], edges: [], disconnected: true }];
+  }
+
+  const paths = [];
+  const walk = (id, nodeAcc, edgeAcc) => {
+    if (paths.length >= FREESE_MAX_SHORTEST_PATHS) return;
+    if (id === startId) {
+      const ids = nodeAcc.slice().reverse();
+      paths.push({
+        target: hub,
+        nodes: ids.map((nid) => model.byId.get(nid)).filter(Boolean),
+        edges: edgeAcc.slice().reverse(),
+        disconnected: false,
+      });
+      return;
+    }
+    const links = parents.get(id) || [];
+    for (let i = 0; i < links.length; i += 1) {
+      if (paths.length >= FREESE_MAX_SHORTEST_PATHS) return;
+      nodeAcc.push(links[i].parentId);
+      edgeAcc.push(links[i].edge);
+      walk(links[i].parentId, nodeAcc, edgeAcc);
+      nodeAcc.pop();
+      edgeAcc.pop();
+    }
+  };
+  walk(targetId, [targetId], []);
+  return paths.length
+    ? paths
+    : [{ target: hub, nodes: [start], edges: [], disconnected: true }];
+}
+
+function freezeAutoSortLayout(nodes, edges, joshId) {
+  const model = freezeGraphModel(nodes, edges);
+  const josh = (joshId && model.byId.get(String(joshId))) || freezeJoshNode(model);
+  const origin = { x: 0, y: 0 };
+  const positions = new Map();
+  if (!josh) return { positions, origin };
+
+  const originId = freezeNodeId(josh);
+  const dist = new Map([[originId, 0]]);
+  const parentOf = new Map([[originId, null]]);
+  const childrenOf = new Map();
+  const queue = [originId];
+
+  const namedNeighbors = (id) => (model.adjacency.get(id) || []).slice().sort((a, b) => {
+    const left = freezeNodeName(model.byId.get(a.id)) || a.id;
+    const right = freezeNodeName(model.byId.get(b.id)) || b.id;
+    return left.localeCompare(right);
+  });
+
+  while (queue.length) {
+    const current = queue.shift();
+    const here = dist.get(current);
+    for (const { id: other } of namedNeighbors(current)) {
+      if (dist.has(other)) continue;
+      dist.set(other, here + 1);
+      parentOf.set(other, current);
+      if (!childrenOf.has(current)) childrenOf.set(current, []);
+      childrenOf.get(current).push(other);
+      queue.push(other);
+    }
+  }
+
+  for (const [parentId, kids] of childrenOf) {
+    kids.sort((a, b) => {
+      const left = freezeNodeName(model.byId.get(a)) || a;
+      const right = freezeNodeName(model.byId.get(b)) || b;
+      return left.localeCompare(right);
+    });
+    childrenOf.set(parentId, kids);
+  }
+
+  const degreeOf = (id) => (model.adjacency.get(id) || []).length;
+  const hopsOf = (id) => (dist.has(id) ? dist.get(id) : 99);
+  const clearanceOf = (id) => freezeNodeClearance(hopsOf(id), degreeOf(id));
+
+  positions.set(originId, { x: 0, y: 0 });
+
+  const placeChildren = (parentId) => {
+    const kids = childrenOf.get(parentId) || [];
+    if (!kids.length) return;
+    const parentPos = positions.get(parentId);
+    const childClearances = kids.map(clearanceOf);
+    const maxChild = Math.max.apply(null, childClearances);
+    const avgChild = childClearances.reduce((sum, value) => sum + value, 0) / childClearances.length;
+    const orbit = Math.max(
+      clearanceOf(parentId) + maxChild,
+      (kids.length * 2 * avgChild) / (2 * Math.PI)
+    );
+    const grandId = parentOf.get(parentId);
+    let startAngle = -Math.PI / 2;
+    if (grandId) {
+      const grandPos = positions.get(grandId);
+      startAngle = Math.atan2(parentPos.y - grandPos.y, parentPos.x - grandPos.x);
+    }
+    kids.forEach((kid, index) => {
+      const angle = startAngle + (Math.PI * 2 * index) / kids.length;
+      positions.set(kid, {
+        x: parentPos.x + Math.cos(angle) * orbit,
+        y: parentPos.y + Math.sin(angle) * orbit,
+      });
+    });
+    kids.forEach(placeChildren);
+  };
+  placeChildren(originId);
+
+  const disconnected = [];
+  for (const node of model.nodes) {
+    const id = freezeNodeId(node);
+    if (!positions.has(id)) disconnected.push(id);
+  }
+  if (disconnected.length) {
+    let maxR = 0;
+    positions.forEach((point) => {
+      maxR = Math.max(maxR, Math.hypot(point.x, point.y));
+    });
+    const farR = maxR + 480 + freezeNodeClearance(99, 0) * 2;
+    disconnected.sort((a, b) => {
+      const left = freezeNodeName(model.byId.get(a)) || a;
+      const right = freezeNodeName(model.byId.get(b)) || b;
+      return left.localeCompare(right);
+    });
+    disconnected.forEach((id, index) => {
+      const angle = (Math.PI * 2 * index) / disconnected.length - Math.PI / 2;
+      positions.set(id, { x: Math.cos(angle) * farR, y: Math.sin(angle) * farR });
+    });
+  }
+
+  const ids = Array.from(positions.keys());
+  for (let pass = 0; pass < 8; pass += 1) {
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const a = ids[i];
+        const b = ids[j];
+        const pa = positions.get(a);
+        const pb = positions.get(b);
+        let dx = pa.x - pb.x;
+        let dy = pa.y - pb.y;
+        let gap = Math.hypot(dx, dy);
+        const need = clearanceOf(a) + clearanceOf(b);
+        if (gap >= need) continue;
+        if (gap < 0.001) {
+          dx = 0.001;
+          dy = 0;
+          gap = 0.001;
+        }
+        const push = (need - gap) * 0.28;
+        const ux = dx / gap;
+        const uy = dy / gap;
+        if (a !== originId) {
+          pa.x += ux * push;
+          pa.y += uy * push;
+        }
+        if (b !== originId) {
+          pb.x -= ux * push;
+          pb.y -= uy * push;
+        }
+      }
+    }
+  }
+
+  positions.set(originId, { x: 0, y: 0 });
+  const originClearance = clearanceOf(originId);
+  (childrenOf.get(originId) || []).forEach((kid) => {
+    const point = positions.get(kid);
+    const need = originClearance + clearanceOf(kid);
+    const gap = Math.hypot(point.x, point.y);
+    if (gap < 0.001) {
+      point.x = 0;
+      point.y = -need;
+      return;
+    }
+    if (gap < need) {
+      const scale = need / gap;
+      point.x *= scale;
+      point.y *= scale;
+    }
+  });
+
+  return { positions, origin };
+}
+
 function freezeDescribeHop(edge, model, fromId, toId) {
   if (!edge) return '';
   const storedSourceId = edge.source || edge.from;
@@ -423,7 +669,37 @@ function freezeNodeCoordinates(node, element) {
   return { x: Number(x), y: Number(y) };
 }
 
-function freezeBoardSnapshot(model, selected, path, camera) {
+function freezeWorldCopy(world) {
+  if (!world || typeof world !== 'object') return null;
+  const w = Number(world.w);
+  const h = Number(world.h);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  const copy = { w, h };
+  if (Number.isFinite(Number(world.ox))) copy.ox = Number(world.ox);
+  if (Number.isFinite(Number(world.oy))) copy.oy = Number(world.oy);
+  return copy;
+}
+
+function freezeCameraLooksAtNotes(camera, nodes, viewport, maxGap) {
+  const cam = freezeNormalizeCamera(camera);
+  if (!cam || !Array.isArray(nodes) || !nodes.length) return false;
+  const cw = viewport && Number(viewport.w);
+  const ch = viewport && Number(viewport.h);
+  if (!Number.isFinite(cw) || !Number.isFinite(ch) || cw <= 0 || ch <= 0) return false;
+  const wx = (cw / 2 - cam.tx) / cam.scale;
+  const wy = (ch / 2 - cam.ty) / cam.scale;
+  const gap = Number.isFinite(maxGap) ? maxGap : 8000;
+  let nearest = Infinity;
+  for (const node of nodes) {
+    const x = Number(node && node.cx);
+    const y = Number(node && node.cy);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    nearest = Math.min(nearest, Math.hypot(x - wx, y - wy));
+  }
+  return nearest < gap;
+}
+
+function freezeBoardSnapshot(model, selected, path, camera, world) {
   const snap = {
     meta: {
       title: 'Freese Index',
@@ -434,7 +710,9 @@ function freezeBoardSnapshot(model, selected, path, camera) {
       edgeCount: model.edges.length,
     },
     joshId: typeof freezeJoshId === 'function' ? freezeJoshId() : null,
-    world: (typeof BOARD_WORLD !== 'undefined' && BOARD_WORLD) || null,
+    world: freezeWorldCopy(world)
+      || freezeWorldCopy(typeof BOARD_WORLD !== 'undefined' && BOARD_WORLD)
+      || null,
     nodes: model.nodes.map((node) => ({
       id: freezeNodeId(node),
       name: freezeNodeName(node),
@@ -485,6 +763,8 @@ const FREESE_STORAGE_KEY = 'freese-index-board-v1';
 const FREESE_CHECKPOINT_KEY = 'freese-index-board-checkpoint-v1';
 const FREESE_CAMERA_KEY = 'freese-index-camera-v1';
 const FREESE_HOP_COLOR_KEY = 'freese-index-hop-color-v1';
+const FREESE_ALL_ROUTES_KEY = 'freese-index-all-routes-v1';
+const FREESE_LOOSE_ENDS_KEY = 'freese-index-loose-ends-v1';
 const FREESE_SUGGESTIONS_KEY = 'freese-index-suggestions-v1';
 
 /** Floor deep zoom so the cork cosmos stays stable (higher on phones). */
@@ -524,6 +804,42 @@ function freezeWriteHopColorPref(on) {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(FREESE_HOP_COLOR_KEY, on ? '1' : '0');
+  } catch (_) { /* ignore */ }
+}
+
+function freezeReadAllRoutesPref() {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    const raw = localStorage.getItem(FREESE_ALL_ROUTES_KEY);
+    if (raw == null) return true;
+    return raw === '1' || raw === 'true';
+  } catch (_) {
+    return true;
+  }
+}
+
+function freezeWriteAllRoutesPref(on) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(FREESE_ALL_ROUTES_KEY, on ? '1' : '0');
+  } catch (_) { /* ignore */ }
+}
+
+function freezeReadLooseEndsPref() {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(FREESE_LOOSE_ENDS_KEY);
+    if (raw == null) return false;
+    return raw === '1' || raw === 'true';
+  } catch (_) {
+    return false;
+  }
+}
+
+function freezeWriteLooseEndsPref(on) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(FREESE_LOOSE_ENDS_KEY, on ? '1' : '0');
   } catch (_) { /* ignore */ }
 }
 
@@ -807,6 +1123,10 @@ function freezeHighlightPath(model, path) {
   return d;
 }
 
+function freezeHighlightPaths(model, paths) {
+  return (paths || []).map((path) => freezeHighlightPath(model, path)).join('');
+}
+
 function freezeBuildSearchPanel(model, activate) {
   let panel = document.getElementById('freeze-search-panel');
   if (panel) return panel;
@@ -973,7 +1293,7 @@ if (typeof document !== 'undefined') {
   (function main() {
     let byId = finalizeNodes();
     let graphModel = freezeGraphModel(NODES, EDGES);
-    const WORLD = { w: BOARD_WORLD.w, h: BOARD_WORLD.h };
+    const WORLD = { w: BOARD_WORLD.w, h: BOARD_WORLD.h, ox: 0, oy: 0 };
     const SHARE_FLAGS = freezeReadShareFlags();
 
     const svg = document.getElementById('graph');
@@ -981,11 +1301,17 @@ if (typeof document !== 'undefined') {
     const boardBg = document.getElementById('board-bg');
     const boardBgShade = document.getElementById('board-bg-shade');
     function syncBoardSurfaceSize() {
+      const ox = WORLD.ox || 0;
+      const oy = WORLD.oy || 0;
       if (boardBg) {
+        boardBg.setAttribute('x', String(ox));
+        boardBg.setAttribute('y', String(oy));
         boardBg.setAttribute('width', String(WORLD.w));
         boardBg.setAttribute('height', String(WORLD.h));
       }
       if (boardBgShade) {
+        boardBgShade.setAttribute('x', String(ox));
+        boardBgShade.setAttribute('y', String(oy));
         boardBgShade.setAttribute('width', String(WORLD.w));
         boardBgShade.setAttribute('height', String(WORLD.h));
       }
@@ -1034,6 +1360,9 @@ if (typeof document !== 'undefined') {
       hovered: null,
       active: null,
       path: null,
+      paths: null,
+      showAllRoutes: freezeReadAllRoutesPref(),
+      looseEnds: freezeReadLooseEndsPref(),
       hubId: freezeJoshId(),
       traceTargetId: null,
       linkFrom: null,
@@ -1046,6 +1375,8 @@ if (typeof document !== 'undefined') {
     let persistTimer = null;
     let cameraTimer = null;
     let tradLayoutSnapshot = null; // when Auto sort is on, traditional x/y live here
+    let tradWorldSnapshot = null; // trad cork size while Auto expands an origin-offset cosmos
+    let tradCameraSnapshot = null; // trad camera while Auto aims at origin 0,0
     let hopDistCache = null; // Map<nodeId, hops>
     let editingEdgeId = null;
     let pathRevealCount = 0;
@@ -1148,9 +1479,22 @@ if (typeof document !== 'undefined') {
       scheduleFrame({ lodPaint: true });
     }
 
+    function shownRoutePaths() {
+      if (ui.paths && ui.paths.showAll) {
+        return (ui.paths.paths || []).filter((path) => path && !path.disconnected);
+      }
+      const one = revealedPath();
+      return one ? [one] : [];
+    }
+
     function pathEdgeIdSet() {
-      const path = revealedPath();
-      return new Set((path && path.edges ? path.edges : []).map((e) => e.id).filter(Boolean));
+      const ids = new Set();
+      for (const path of shownRoutePaths()) {
+        for (const edge of path.edges || []) {
+          if (edge && edge.id) ids.add(edge.id);
+        }
+      }
+      return ids;
     }
 
     function prefersReducedMotion() {
@@ -1183,8 +1527,14 @@ if (typeof document !== 'undefined') {
       }
     }
 
-    function applyPathNodeClasses(path) {
-      const revealed = new Set((path && path.nodes ? path.nodes : []).map(freezeNodeId));
+    function applyPathNodeClasses() {
+      const revealed = new Set();
+      for (const path of shownRoutePaths()) {
+        for (const node of path.nodes || []) {
+          const nid = freezeNodeId(node);
+          if (nid) revealed.add(nid);
+        }
+      }
       for (const [nid, g] of nodeEls) {
         const onPath = revealed.has(nid);
         g.classList.toggle('on-path', onPath);
@@ -1194,8 +1544,7 @@ if (typeof document !== 'undefined') {
     }
 
     function paintRevealedPath() {
-      const path = revealedPath();
-      applyPathNodeClasses(path);
+      applyPathNodeClasses();
       renderPathAccent();
       applyLabelHighlights();
       scheduleFrame({ lodPaint: true });
@@ -1204,7 +1553,8 @@ if (typeof document !== 'undefined') {
     function startPathReveal() {
       cancelPathReveal();
       const edges = (ui.path && ui.path.edges) || [];
-      if (!edges.length || prefersReducedMotion()) {
+      const showAll = !!(ui.paths && ui.paths.showAll);
+      if (showAll || !edges.length || prefersReducedMotion()) {
         pathRevealCount = edges.length;
         paintRevealedPath();
         return;
@@ -1235,8 +1585,23 @@ if (typeof document !== 'undefined') {
       return set;
     }
 
+    function persistWorld() {
+      if (ui.layoutMode === 'auto' && tradWorldSnapshot) {
+        return freezeWorldCopy(tradWorldSnapshot);
+      }
+      return freezeWorldCopy(BOARD_WORLD);
+    }
+
+    function persistCameraView() {
+      if (ui.layoutMode === 'auto' && tradCameraSnapshot) {
+        return freezeNormalizeCamera(tradCameraSnapshot) || tradCameraSnapshot;
+      }
+      return cameraSnapshot();
+    }
+
     function persistCamera(immediate) {
       if (ui.viewOnly || ui.shared) return;
+      if (ui.layoutMode === 'auto') return;
       const write = () => freezeWriteCamera(cameraSnapshot());
       if (immediate) {
         clearTimeout(cameraTimer);
@@ -1250,18 +1615,11 @@ if (typeof document !== 'undefined') {
     function persistBoard(immediate) {
       if (ui.viewOnly) return;
       const write = () => {
-        const nodesForSnap = positionsForPersist();
-        const modelForSnap = nodesForSnap === NODES
-          ? graphModel
-          : freezeGraphModel(nodesForSnap, EDGES);
-        const snap = freezeBoardSnapshot(
-          modelForSnap,
-          ui.selected ? byId.get(ui.selected) : null,
-          ui.path,
-          cameraSnapshot()
-        );
-        freezeWriteLocalBoard(snap);
-        if (!(ui.viewOnly || ui.shared)) freezeWriteCamera(cameraSnapshot());
+        freezeWriteLocalBoard(currentSnapshot());
+        if (!(ui.viewOnly || ui.shared)) {
+          const cam = persistCameraView();
+          if (cam) freezeWriteCamera(cam);
+        }
       };
       if (immediate) {
         clearTimeout(persistTimer);
@@ -1275,12 +1633,41 @@ if (typeof document !== 'undefined') {
     function applyWorldSize(next) {
       WORLD.w = next.w;
       WORLD.h = next.h;
+      if (Object.prototype.hasOwnProperty.call(next, 'ox')) WORLD.ox = next.ox;
+      if (Object.prototype.hasOwnProperty.call(next, 'oy')) WORLD.oy = next.oy;
       BOARD_WORLD.w = next.w;
       BOARD_WORLD.h = next.h;
       syncBoardSurfaceSize();
     }
 
+    function fitCorkAroundAutoNodes() {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const n of NODES) {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + n.w);
+        maxY = Math.max(maxY, n.y + n.h);
+      }
+      if (!Number.isFinite(minX)) return false;
+      const margin = OPEN_BOARD_MARGIN;
+      const ox = Math.min(0, Math.floor(minX - margin), -margin);
+      const oy = Math.min(0, Math.floor(minY - margin), -margin);
+      const right = Math.max(maxX + margin, margin);
+      const bottom = Math.max(maxY + margin, margin);
+      const w = Math.ceil(right - ox);
+      const h = Math.ceil(bottom - oy);
+      if (WORLD.ox === ox && WORLD.oy === oy && WORLD.w === w && WORLD.h === h) return false;
+      applyWorldSize({ w, h, ox, oy });
+      return true;
+    }
+
     function expandWorldIfNeeded() {
+      if (ui.layoutMode === 'auto') {
+        return fitCorkAroundAutoNodes();
+      }
       const opened = freezeEnsureOpenBoardMargin(NODES, WORLD, OPEN_BOARD_MARGIN);
       if (opened.world.w !== WORLD.w || opened.world.h !== WORLD.h || opened.shifted) {
         applyWorldSize(opened.world);
@@ -1307,6 +1694,7 @@ if (typeof document !== 'undefined') {
       visibleNodeIds = new Set();
       buildNodes();
       rebuildNodeIndex();
+      applyLooseEndMarks();
     }
 
     function refreshBoard({ persist = true, fit = false } = {}) {
@@ -1583,6 +1971,7 @@ if (typeof document !== 'undefined') {
         const r = n.big ? 3 : (s > 0.08 ? 2 : 1);
         ctx.fillStyle = n.pin || n.color || '#c62828';
         ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+        if (isLooseEndNode(n)) paintLooseEndMark(ctx, sx, sy, r * 4, r * 4);
       }
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
@@ -1609,6 +1998,7 @@ if (typeof document !== 'undefined') {
         const r = n.big ? 2.4 : 1.6;
         ctx.fillStyle = n.pin || n.color || '#c62828';
         ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+        if (isLooseEndNode(n)) paintLooseEndMark(ctx, sx, sy, r * 4, r * 4);
       }
       const panning = drag.mode === 'pan' || drag.mode === 'node';
       const labelCandidates = visible.slice().sort((a, b) => {
@@ -1729,6 +2119,7 @@ if (typeof document !== 'undefined') {
         ctx.strokeStyle = 'rgba(80, 55, 30, 0.28)';
         ctx.lineWidth = 1;
         ctx.strokeRect(x0 + 0.5, y0 + 0.5, noteW - 1, noteH - 1);
+        if (isLooseEndNode(n)) paintLooseEndMark(ctx, sx, sy, noteW, noteH);
 
         ctx.beginPath();
         ctx.fillStyle = pin;
@@ -1805,8 +2196,9 @@ if (typeof document !== 'undefined') {
       // Always keep selection / path / link endpoints mounted for chrome.
       if (ui.selected) nextVisible.add(ui.selected);
       if (ui.linkFrom) nextVisible.add(ui.linkFrom);
-      if (ui.path && ui.path.nodes) {
-        for (const n of ui.path.nodes) {
+      const keepPaths = (ui.paths && ui.paths.paths) || (ui.path ? [ui.path] : []);
+      for (const path of keepPaths) {
+        for (const n of path.nodes || []) {
           const id = freezeNodeId(n);
           if (id) nextVisible.add(id);
         }
@@ -1837,15 +2229,14 @@ if (typeof document !== 'undefined') {
 
     function renderPathAccent() {
       if (!pathAccent) return;
-      pathAccent.setAttribute('d', freezeHighlightPath(graphModel, revealedPath() || { edges: [] }));
+      pathAccent.setAttribute('d', freezeHighlightPaths(graphModel, shownRoutePaths()));
     }
 
     function renderLabels() {
       labelsG.textContent = '';
       if (isFarLod()) return; // canvas owns readable names when zoomed out
       // At board scale, only label the active star + Freese path — never all 700+ strings.
-      const shown = revealedPath();
-      const pathEdgeIds = new Set((shown && shown.edges ? shown.edges : []).map((e) => e.id).filter(Boolean));
+      const pathEdgeIds = pathEdgeIdSet();
       const activeId = ui.active;
       const relevant = EDGES.filter((e) => {
         if (pathEdgeIds.has(e.id)) return true;
@@ -1976,6 +2367,12 @@ if (typeof document !== 'undefined') {
         note.setAttribute('class', 'note');
         if (n.tilt) note.setAttribute('transform', `rotate(${n.tilt} ${n.w / 2} ${n.h / 2})`);
 
+        const looseRing = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        looseRing.setAttribute('class', 'loose-ring');
+        looseRing.setAttribute('width', n.w);
+        looseRing.setAttribute('height', n.h);
+        looseRing.setAttribute('rx', 2);
+
         const chip = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         chip.setAttribute('class', 'chip');
         chip.setAttribute('width', n.w);
@@ -1999,6 +2396,7 @@ if (typeof document !== 'undefined') {
         lbl.setAttribute('fill', n.ink);
         lbl.textContent = noteFaceLabel(n.name);
 
+        note.appendChild(looseRing);
         note.appendChild(chip);
         note.appendChild(pin);
         note.appendChild(lbl);
@@ -2045,33 +2443,58 @@ if (typeof document !== 'undefined') {
     function growCosmosForViewport() {
       const softPad = Math.max(4000, Math.round(OPEN_BOARD_MARGIN * 0.25));
       const rect = viewportWorldRect(0);
+      const ox = WORLD.ox || 0;
+      const oy = WORLD.oy || 0;
+      const auto = ui.layoutMode === 'auto';
       // Hot path: most pans are inside the soft pad — bail before any alloc/DOM.
       if (
-        rect.minX >= softPad &&
-        rect.minY >= softPad &&
-        rect.maxX <= WORLD.w - softPad &&
-        rect.maxY <= WORLD.h - softPad
+        rect.minX >= ox + softPad &&
+        rect.minY >= oy + softPad &&
+        rect.maxX <= ox + WORLD.w - softPad &&
+        rect.maxY <= oy + WORLD.h - softPad
       ) {
         return false;
       }
 
       let nextW = WORLD.w;
       let nextH = WORLD.h;
+      let nextOx = ox;
+      let nextOy = oy;
       let shiftX = 0;
       let shiftY = 0;
       // Grow in chunks so we don't resize the cork every pointermove near the edge.
-      if (rect.minX < softPad) {
-        shiftX = Math.ceil((softPad - rect.minX) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      if (rect.minX < ox + softPad) {
+        const grow = Math.ceil((ox + softPad - rect.minX) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+        if (auto) {
+          nextOx -= grow;
+          nextW += grow;
+        } else {
+          shiftX = grow;
+        }
       }
-      if (rect.minY < softPad) {
-        shiftY = Math.ceil((softPad - rect.minY) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      if (rect.minY < oy + softPad) {
+        const grow = Math.ceil((oy + softPad - rect.minY) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+        if (auto) {
+          nextOy -= grow;
+          nextH += grow;
+        } else {
+          shiftY = grow;
+        }
       }
-      if (rect.maxX > WORLD.w - softPad) {
-        nextW = WORLD.w + Math.ceil((rect.maxX + softPad - WORLD.w) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      if (rect.maxX > ox + WORLD.w - softPad) {
+        nextW += Math.ceil((rect.maxX + softPad - (ox + WORLD.w)) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
       }
-      if (rect.maxY > WORLD.h - softPad) {
-        nextH = WORLD.h + Math.ceil((rect.maxY + softPad - WORLD.h) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
+      if (rect.maxY > oy + WORLD.h - softPad) {
+        nextH += Math.ceil((rect.maxY + softPad - (oy + WORLD.h)) / COSMOS_GROW_CHUNK) * COSMOS_GROW_CHUNK;
       }
+
+      if (auto) {
+        if (nextOx === ox && nextOy === oy && nextW === WORLD.w && nextH === WORLD.h) return false;
+        applyWorldSize({ w: nextW, h: nextH, ox: nextOx, oy: nextOy });
+        cosmosPersistDirty = true;
+        return true;
+      }
+
       if (!shiftX && !shiftY && nextW === WORLD.w && nextH === WORLD.h) return false;
 
       if (shiftX || shiftY) {
@@ -2091,7 +2514,7 @@ if (typeof document !== 'undefined') {
         }
         rebuildSpatialIndex();
       }
-      applyWorldSize({ w: nextW, h: nextH });
+      applyWorldSize({ w: nextW, h: nextH, ox: 0, oy: 0 });
       cosmosPersistDirty = true;
       return true;
     }
@@ -2107,8 +2530,10 @@ if (typeof document !== 'undefined') {
       // Loose slack — cork keeps expanding, so pan feels like a globe not a boxed map.
       const slack = 0.55;
       const cw = svg.clientWidth, ch = svg.clientHeight;
-      view.tx = clamp(view.tx, cw - WORLD.w * view.scale - cw * slack, cw * slack);
-      view.ty = clamp(view.ty, ch - WORLD.h * view.scale - ch * slack, ch * slack);
+      const ox = WORLD.ox || 0;
+      const oy = WORLD.oy || 0;
+      view.tx = clamp(view.tx, cw - (ox + WORLD.w) * view.scale - cw * slack, cw * slack - ox * view.scale);
+      view.ty = clamp(view.ty, ch - (oy + WORLD.h) * view.scale - ch * slack, ch * slack - oy * view.scale);
     }
 
     function zoomAt(cx, cy, factor) {
@@ -2205,7 +2630,21 @@ if (typeof document !== 'undefined') {
     function setPathForNode(id) {
       const node = id ? byId.get(id) : null;
       const target = pathTargetNode();
-      ui.path = node ? freezeShortestPath(graphModel, node, target) : null;
+      if (!node) {
+        ui.path = null;
+        ui.paths = null;
+        startPathReveal();
+        return;
+      }
+      const routes = freezeAllShortestPaths(graphModel, node, target);
+      const canonical = freezeShortestPath(graphModel, node, target);
+      ui.path = canonical;
+      ui.paths = {
+        target,
+        paths: routes.length ? routes : [canonical],
+        showAll: !!ui.showAllRoutes,
+        activeIndex: 0,
+      };
       startPathReveal();
     }
 
@@ -2228,6 +2667,7 @@ if (typeof document !== 'undefined') {
       ui.selected = null;
       ui.hovered = null;
       ui.path = null;
+      ui.paths = null;
       ui.traceTargetId = null;
       cancelPathReveal();
       pathRevealCount = 0;
@@ -2296,7 +2736,47 @@ if (typeof document !== 'undefined') {
           : '<li>No yarn paths to this hub.</li>') +
         '</ol>' +
         `<p class="ro-hint">Color by hops is the distance heatmap from ${escapeHtml(hub)}. Wikipedia opens from a selected note \u2014 no URLs to paste.</p>` +
+        looseEndsExploreHtml() +
         '</section>';
+    }
+
+    function looseEndsExploreHtml() {
+      if (!ui.looseEnds) return '';
+      const lows = freezeLowAccessNodes(graphModel, FREESE_LOOSE_END_DEGREE);
+      const shown = lows.slice(0, 24);
+      const rest = Math.max(0, lows.length - shown.length);
+      return '<p class="ro-explore-title">Loose ends</p>' +
+        '<ol class="ro-explore-list">' +
+        (shown.length
+          ? shown.map((row) =>
+            `<li><button type="button" data-go="${escapeHtml(row.id)}">${escapeHtml(row.name)}</button>` +
+            ` <span class="ro-explore-meta">${row.degree}</span></li>`
+          ).join('')
+          : '<li>No low-access notes.</li>') +
+        '</ol>' +
+        (rest ? `<p class="ro-explore-meta">${rest} more loose ends on the board.</p>` : '');
+    }
+
+    function routeSetLinesHtml() {
+      const routes = (ui.paths && ui.paths.paths) || (ui.path ? [ui.path] : []);
+      if (!routes.length) return '';
+      const showAll = !!(ui.paths ? ui.paths.showAll : ui.showAllRoutes);
+      return '<div class="ro-path-toolbar">' +
+        `<button type="button" class="btn btn-ghost ro-path-toggle" data-routes-toggle aria-pressed="${showAll ? 'true' : 'false'}">${showAll ? 'All routes' : 'One route'}</button>` +
+        '</div>' +
+        '<ol class="ro-routes" aria-label="Routes to hub">' +
+        routes.map((path, index) => {
+          if (path.disconnected) {
+            const fromName = freezeNodeName((path.nodes || [])[0]) || 'This note';
+            const toName = freezeNodeName(path.target) || 'Josh Freese';
+            return `<li>${escapeHtml(fromName)} is disconnected from ${escapeHtml(toName)}.</li>`;
+          }
+          const names = (path.nodes || []).map(freezeNodeName).join(' → ');
+          const hops = Math.max(0, (path.nodes || []).length - 1);
+          const active = !showAll && ui.paths && ui.paths.activeIndex === index;
+          return `<li><button type="button" class="ro-route${active ? ' is-active' : ''}" data-route-index="${index}">${escapeHtml(names)} (${hops} hop${hops === 1 ? '' : 's'})</button></li>`;
+        }).join('') +
+        '</ol>';
     }
 
     function bindTraceSearch(excludeId) {
@@ -2337,6 +2817,21 @@ if (typeof document !== 'undefined') {
       }
       const clearTraceBtn = readout.querySelector('[data-clear-trace]');
       if (clearTraceBtn) clearTraceBtn.addEventListener('click', () => setTraceTarget(null));
+      const routesToggle = readout.querySelector('[data-routes-toggle]');
+      if (routesToggle) {
+        routesToggle.addEventListener('click', () => setShowAllRoutes(!ui.showAllRoutes));
+      }
+      for (const b of readout.querySelectorAll('[data-route-index]')) {
+        b.addEventListener('click', () => {
+          const idx = Number(b.getAttribute('data-route-index'));
+          if (!ui.paths || !ui.paths.paths[idx]) return;
+          ui.paths.activeIndex = idx;
+          ui.path = ui.paths.paths[idx];
+          if (!ui.paths.showAll) startPathReveal();
+          else paintRevealedPath();
+          updateReadout(ui.selected);
+        });
+      }
       if (id) bindTraceSearch(id);
     }
 
@@ -2362,6 +2857,9 @@ if (typeof document !== 'undefined') {
           '</div>' +
           (ui.hopColor
             ? `<p class="ro-hint">Hop colors overlay note paper by distance from ${escapeHtml(hub)}.</p>`
+            : '') +
+          (ui.looseEnds
+            ? `<p class="ro-hint">Loose ends mark notes with fewer than ${FREESE_LOOSE_END_DEGREE} strings (not Josh).</p>`
             : '') +
           exploreBoardHtml() +
           '<p class="ro-hint">Drag to pan \u00b7 scroll to zoom out into the cork cosmos \u00b7 click a note \u00b7 <kbd>E</kbd> edit (move / add / yarn) \u00b7 <kbd>P</kbd> panels \u00b7 <kbd>F</kbd> fit \u00b7 <kbd>D</kbd> dim yarn \u00b7 <kbd>Esc</kbd> clear</p>';
@@ -2418,6 +2916,7 @@ if (typeof document !== 'undefined') {
         '</div>' +
         '<section class="ro-path" data-freeze-path-section="true" aria-label="' + escapeHtml(pathTitle) + '">' +
         `<p class="ro-path-title">${escapeHtml(pathTitle)}</p>` +
+        routeSetLinesHtml() +
         `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
         (pathDetails.hops.length
           ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
@@ -2522,8 +3021,8 @@ if (typeof document !== 'undefined') {
         n.x = drag.nx + dx / view.scale;
         n.y = drag.ny + dy / view.scale;
         n.cx = n.x + n.w / 2; n.cy = n.y + n.h / 2;
-        n.x = clamp(n.x, -n.w, WORLD.w);
-        n.y = clamp(n.y, -n.h, WORLD.h);
+        n.x = clamp(n.x, (WORLD.ox || 0) - n.w, (WORLD.ox || 0) + WORLD.w);
+        n.y = clamp(n.y, (WORLD.oy || 0) - n.h, (WORLD.oy || 0) + WORLD.h);
         n.cx = n.x + n.w / 2; n.cy = n.y + n.h / 2;
         nodeEls.get(n.id).setAttribute('transform', `translate(${n.x},${n.y})`);
         scheduleEdgeRedraw();
@@ -2651,6 +3150,8 @@ if (typeof document !== 'undefined') {
             closeSuggestModal();
           } else if (document.getElementById('suggestions-modal') && !document.getElementById('suggestions-modal').hidden) {
             closeSuggestionsModal();
+          } else if (document.getElementById('faq-modal') && !document.getElementById('faq-modal').hidden) {
+            closeFaqModal();
           } else {
             clearSelection();
           }
@@ -3129,62 +3630,14 @@ if (typeof document !== 'undefined') {
       const joshId = freezeJoshId();
       const josh = byId.get(joshId) || NODES.find((n) => /^josh freese$/i.test(n.name));
       if (!josh) return null;
-      const model = freezeGraphModel(NODES, EDGES);
-      const dist = new Map();
-      const queue = [josh.id];
-      dist.set(josh.id, 0);
-      while (queue.length) {
-        const cur = queue.shift();
-        const d = dist.get(cur);
-        for (const { id: other } of (model.adjacency.get(cur) || [])) {
-          if (dist.has(other)) continue;
-          dist.set(other, d + 1);
-          queue.push(other);
-        }
-      }
-      const rings = new Map();
+      const result = freezeAutoSortLayout(NODES, EDGES, josh.id);
       for (const n of NODES) {
-        const d = dist.has(n.id) ? dist.get(n.id) : 99;
-        if (!rings.has(d)) rings.set(d, []);
-        rings.get(d).push(n);
-      }
-      const originX = WORLD.w / 2;
-      const originY = WORLD.h / 2;
-      josh.x = originX - josh.w / 2;
-      josh.y = originY - josh.h / 2;
-      for (const [d, members] of rings) {
-        if (d === 0) continue;
-        const radius = 160 + d * 210;
-        members.sort((a, b) => a.name.localeCompare(b.name));
-        members.forEach((n, i) => {
-          const angle = (Math.PI * 2 * i) / members.length - Math.PI / 2;
-          n.x = originX + Math.cos(angle) * radius - n.w / 2;
-          n.y = originY + Math.sin(angle) * radius - n.h / 2;
-        });
-      }
-      for (let pass = 0; pass < 18; pass++) {
-        for (let i = 0; i < NODES.length; i++) {
-          for (let j = i + 1; j < NODES.length; j++) {
-            const a = NODES[i], b = NODES[j];
-            const dx = (a.x + a.w / 2) - (b.x + b.w / 2);
-            const dy = (a.y + a.h / 2) - (b.y + b.h / 2);
-            const gapX = (a.w + b.w) / 2 + 12;
-            const gapY = (a.h + b.h) / 2 + 12;
-            if (Math.abs(dx) < gapX && Math.abs(dy) < gapY) {
-              const push = 0.35;
-              const sx = dx === 0 ? (Math.random() - 0.5) : Math.sign(dx) * (gapX - Math.abs(dx)) * push;
-              const sy = dy === 0 ? (Math.random() - 0.5) : Math.sign(dy) * (gapY - Math.abs(dy)) * push;
-              if (a.id !== josh.id) { a.x += sx; a.y += sy; }
-              if (b.id !== josh.id) { b.x -= sx; b.y -= sy; }
-            }
-          }
-        }
-      }
-      for (const n of NODES) {
-        n.x = clamp(n.x, 40, WORLD.w - n.w - 40);
-        n.y = clamp(n.y, 40, WORLD.h - n.h - 40);
-        n.cx = n.x + n.w / 2;
-        n.cy = n.y + n.h / 2;
+        const point = result.positions.get(n.id);
+        if (!point) continue;
+        n.cx = point.x;
+        n.cy = point.y;
+        n.x = n.cx - n.w / 2;
+        n.y = n.cy - n.h / 2;
       }
       return josh;
     }
@@ -3208,29 +3661,42 @@ if (typeof document !== 'undefined') {
       }
       if (next === 'auto') {
         if (!tradLayoutSnapshot) tradLayoutSnapshot = captureTradPositions();
+        if (!tradWorldSnapshot) tradWorldSnapshot = { w: WORLD.w, h: WORLD.h };
+        if (!tradCameraSnapshot) tradCameraSnapshot = cameraSnapshot();
         const josh = layoutNodesAroundJoshInPlace();
         if (!josh) {
           tradLayoutSnapshot = null;
+          tradWorldSnapshot = null;
+          tradCameraSnapshot = null;
           showToast('Josh Freese not found — cannot Auto sort.');
           return;
         }
         ui.layoutMode = 'auto';
+        fitCorkAroundAutoNodes();
         rebuildGraphModel();
         remountNodes();
         renderEdges();
         renderLabels();
         applyHopColorsToDom();
-        centerNode(josh.id);
-        showToast('Auto sort — display-only rings from Josh (Trad positions kept).');
+        centerOnFreeseOrigin();
+        showToast('Auto sort — display-only parent-orbit from Josh (Trad positions kept).');
       } else {
         if (tradLayoutSnapshot) applyPositionList(tradLayoutSnapshot);
+        if (tradWorldSnapshot) {
+          applyWorldSize({ w: tradWorldSnapshot.w, h: tradWorldSnapshot.h, ox: 0, oy: 0 });
+        } else {
+          applyWorldSize({ w: WORLD.w, h: WORLD.h, ox: 0, oy: 0 });
+        }
         tradLayoutSnapshot = null;
+        tradWorldSnapshot = null;
+        tradCameraSnapshot = null;
         ui.layoutMode = 'trad';
         rebuildGraphModel();
         remountNodes();
         renderEdges();
         renderLabels();
         applyHopColorsToDom();
+        centerOnFreeseOrigin();
         showToast('Trad view — saved cork positions.');
       }
       syncLayoutToggleUi();
@@ -3267,10 +3733,10 @@ if (typeof document !== 'undefined') {
         if (showSet) {
           const name = String(selected.name || '');
           const short = name.length > 22 ? name.slice(0, 21) + '…' : name;
-          const label = phone ? `Hops: ${short}` : `See hops from ${name}`;
+          const label = phone ? `Center: ${short}` : `Center board on ${name}`;
           setBtn.textContent = label;
-          setBtn.setAttribute('aria-label', `See hops from ${name}`);
-          setBtn.title = `Temporarily measure separation from ${name}`;
+          setBtn.setAttribute('aria-label', `Center board on ${name}`);
+          setBtn.title = `Center board on ${name}`;
         }
       }
 
@@ -3295,6 +3761,105 @@ if (typeof document !== 'undefined') {
 
     function toggleHopColor() {
       setHopColor(!ui.hopColor);
+    }
+
+    function syncLooseEndsToggleUi() {
+      const btn = document.getElementById('btn-loose-ends');
+      if (!btn) return;
+      btn.setAttribute('aria-checked', String(!!ui.looseEnds));
+      btn.classList.toggle('on', !!ui.looseEnds);
+    }
+
+    function applyLooseEndMarks() {
+      document.body.classList.toggle('loose-ends', !!ui.looseEnds);
+      const joshId = freezeJoshId();
+      if (!ui.looseEnds) {
+        for (const g of nodeEls.values()) g.classList.remove('loose-end');
+        return;
+      }
+      const lows = new Set(freezeLowAccessNodes(graphModel, FREESE_LOOSE_END_DEGREE).map((row) => row.id));
+      for (const [id, g] of nodeEls) {
+        g.classList.toggle('loose-end', lows.has(id) && id !== joshId);
+      }
+    }
+
+    function setLooseEnds(on) {
+      ui.looseEnds = !!on;
+      freezeWriteLooseEndsPref(ui.looseEnds);
+      syncLooseEndsToggleUi();
+      applyLooseEndMarks();
+      updateReadout(ui.selected);
+      scheduleFrame({ lodPaint: true });
+      showToast(ui.looseEnds
+        ? 'Loose ends marked — notes with fewer than 5 strings.'
+        : 'Loose-end marks hidden.');
+    }
+
+    function toggleLooseEnds() {
+      setLooseEnds(!ui.looseEnds);
+    }
+
+    function setShowAllRoutes(on) {
+      ui.showAllRoutes = !!on;
+      freezeWriteAllRoutesPref(ui.showAllRoutes);
+      if (ui.paths) ui.paths.showAll = ui.showAllRoutes;
+      startPathReveal();
+      updateReadout(ui.selected);
+    }
+
+    function isJoshNode(node) {
+      if (!node) return false;
+      return node.id === freezeJoshId() || /^josh\s+freese$/i.test(node.name || '');
+    }
+
+    function surpriseMe() {
+      const candidates = [];
+      for (const n of NODES) {
+        if (isJoshNode(n)) continue;
+        if (hopDistanceFor(n.id) >= 99) continue;
+        candidates.push(n);
+      }
+      if (!candidates.length) {
+        showToast('No connected notes to surprise you with.');
+        return;
+      }
+      const pick = candidates[Math.floor(Math.random() * candidates.length)];
+      selectNode(pick.id);
+      centerNode(pick.id);
+      const hops = hopDistanceFor(pick.id);
+      showToast(`${pick.name} — ${hops} hop${hops === 1 ? '' : 's'} from ${hubDisplayName()}.`);
+    }
+
+    function openFaqModal() {
+      const modal = document.getElementById('faq-modal');
+      if (modal) modal.hidden = false;
+      const closeBtn = document.getElementById('faq-close');
+      if (closeBtn) closeBtn.focus();
+    }
+
+    function closeFaqModal() {
+      const modal = document.getElementById('faq-modal');
+      if (modal) modal.hidden = true;
+    }
+
+    function tokenColor(name) {
+      if (typeof getComputedStyle !== 'function') return '';
+      return getComputedStyle(document.body).getPropertyValue(name).trim();
+    }
+
+    function isLooseEndNode(n) {
+      if (!ui.looseEnds || !n || isJoshNode(n)) return false;
+      return (n.neighbors || []).length < FREESE_LOOSE_END_DEGREE;
+    }
+
+    function paintLooseEndMark(ctx, sx, sy, rw, rh) {
+      const amber = tokenColor('--amber');
+      if (!amber || !ctx) return;
+      ctx.save();
+      ctx.strokeStyle = amber;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx - rw / 2 - 2, sy - rh / 2 - 2, rw + 4, rh + 4);
+      ctx.restore();
     }
 
     function openEdgeModal(edgeId) {
@@ -3586,7 +4151,7 @@ if (typeof document !== 'undefined') {
 
     function reorganizeAroundJosh() {
       if (ui.viewOnly) {
-        showToast('View-only — use Auto sort for a display-only ring layout.');
+        showToast('View-only — use Auto sort for a display-only parent-orbit layout.');
         return;
       }
       if (!window.confirm(
@@ -3594,7 +4159,10 @@ if (typeof document !== 'undefined') {
       )) return;
       if (ui.layoutMode === 'auto') {
         tradLayoutSnapshot = null;
+        tradWorldSnapshot = null;
+        tradCameraSnapshot = null;
         ui.layoutMode = 'trad';
+        applyWorldSize({ w: WORLD.w, h: WORLD.h, ox: 0, oy: 0 });
         syncLayoutToggleUi();
       }
       showToast('Reorganizing around Josh…');
@@ -3603,6 +4171,7 @@ if (typeof document !== 'undefined') {
         showToast('Josh Freese not found — cannot reorganize.');
         return;
       }
+      expandWorldIfNeeded();
       refreshBoard({ persist: true, fit: true });
       showToast('Board reorganized around Josh Freese (saved positions updated).');
     }
@@ -3723,8 +4292,18 @@ if (typeof document !== 'undefined') {
     /* ================= local board snapshot / actions ================= */
 
     function currentSnapshot() {
+      const nodesForSnap = positionsForPersist();
+      const modelForSnap = nodesForSnap === NODES
+        ? graphModel
+        : freezeGraphModel(nodesForSnap, EDGES);
       const selected = ui.selected ? byId.get(ui.selected) : null;
-      return freezeBoardSnapshot(graphModel, selected, ui.path, cameraSnapshot());
+      return freezeBoardSnapshot(
+        modelForSnap,
+        selected,
+        ui.path,
+        persistCameraView(),
+        persistWorld()
+      );
     }
 
     async function copyText(text) {
@@ -3915,14 +4494,35 @@ if (typeof document !== 'undefined') {
     if (pngBtn) pngBtn.addEventListener('click', exportBoardPng);
     const hopBtn = document.getElementById('btn-hop-color');
     if (hopBtn) hopBtn.addEventListener('click', toggleHopColor);
+    const looseBtn = document.getElementById('btn-loose-ends');
+    if (looseBtn) looseBtn.addEventListener('click', toggleLooseEnds);
+    const surpriseBtn = document.getElementById('btn-surprise');
+    if (surpriseBtn) surpriseBtn.addEventListener('click', surpriseMe);
+    const faqBtn = document.getElementById('btn-faq');
+    if (faqBtn) faqBtn.addEventListener('click', openFaqModal);
+    const faqClose = document.getElementById('faq-close');
+    if (faqClose) faqClose.addEventListener('click', closeFaqModal);
+    const faqModal = document.getElementById('faq-modal');
+    if (faqModal) {
+      faqModal.addEventListener('click', (ev) => {
+        if (ev.target === faqModal) closeFaqModal();
+      });
+    }
     const setHubBtn = document.getElementById('btn-set-hub');
     if (setHubBtn) {
       setHubBtn.addEventListener('click', () => {
-        if (ui.selected) setHub(ui.selected);
+        if (!ui.selected) return;
+        setHub(ui.selected);
+        centerNode(ui.selected);
       });
     }
     const resetHubBtn = document.getElementById('btn-reset-hub');
-    if (resetHubBtn) resetHubBtn.addEventListener('click', () => setHub(freezeJoshId()));
+    if (resetHubBtn) {
+      resetHubBtn.addEventListener('click', () => {
+        setHub(freezeJoshId());
+        centerOnFreeseOrigin();
+      });
+    }
     const layoutBtn = document.getElementById('btn-layout');
     if (layoutBtn) layoutBtn.addEventListener('click', toggleLayoutMode);
     const suggestBtn = document.getElementById('btn-suggest');
@@ -3944,12 +4544,6 @@ if (typeof document !== 'undefined') {
     if (edgeForm) edgeForm.addEventListener('submit', submitEdgeForm);
     const edgeCancel = document.getElementById('edge-cancel');
     if (edgeCancel) edgeCancel.addEventListener('click', closeEdgeModal);
-    const edgeModal = document.getElementById('edge-modal');
-    if (edgeModal) {
-      edgeModal.addEventListener('click', (ev) => {
-        if (ev.target === edgeModal) closeEdgeModal();
-      });
-    }
     const suggestForm = document.getElementById('suggest-form');
     if (suggestForm) suggestForm.addEventListener('submit', submitSuggestForm);
     const suggestCancel = document.getElementById('suggest-cancel');
@@ -4014,11 +4608,6 @@ if (typeof document !== 'undefined') {
         if (ev.key === 'Escape') {
           hideConnectSuggestions();
         }
-      });
-    }
-    if (noteModal) {
-      noteModal.addEventListener('click', (ev) => {
-        if (ev.target === noteModal) closeNoteModal();
       });
     }
 
@@ -4110,21 +4699,35 @@ if (typeof document !== 'undefined') {
       }
     }
 
+    function centerWorld(x, y) {
+      const cw = svg.clientWidth || 0;
+      const ch = svg.clientHeight || 0;
+      if (!cw || !ch) return;
+      view.tx = cw / 2 - x * view.scale;
+      view.ty = ch / 2 - y * view.scale;
+      clampPan();
+      applyTransform();
+      view.fitted = true;
+      persistCamera(false);
+    }
+
+    function centerOnFreeseOrigin() {
+      if (ui.layoutMode === 'auto') {
+        centerWorld(0, 0);
+        return;
+      }
+      const joshId = freezeJoshId();
+      const josh = byId.get(joshId) || NODES.find((n) => /^josh freese$/i.test(n.name));
+      if (josh) centerNode(josh.id);
+    }
+
     function centerNode(idOrNode) {
       const id = typeof idOrNode === 'string' || typeof idOrNode === 'number'
         ? String(idOrNode)
         : (idOrNode && idOrNode.id);
       const n = id ? byId.get(id) : null;
       if (!n) return;
-      const cw = svg.clientWidth || 0;
-      const ch = svg.clientHeight || 0;
-      if (!cw || !ch) return;
-      view.tx = cw / 2 - n.cx * view.scale;
-      view.ty = ch / 2 - n.cy * view.scale;
-      clampPan();
-      applyTransform();
-      view.fitted = true;
-      persistCamera(false);
+      centerWorld(n.cx, n.cy);
     }
 
     function renderBoard() {
@@ -4170,12 +4773,19 @@ if (typeof document !== 'undefined') {
     rebuildHopDistances();
     applyHopColorsToDom();
     syncHopColorToggleUi();
+    syncLooseEndsToggleUi();
+    applyLooseEndMarks();
     syncHubResetUi();
     syncLayoutToggleUi();
 
     const guestCamera = !!(ui.viewOnly || ui.shared);
     const savedCamera = guestCamera ? null : freezeReadCamera();
-    if (savedCamera) {
+    const cameraFitsNotes = !savedCamera || freezeCameraLooksAtNotes(
+      savedCamera,
+      NODES,
+      { w: svg.clientWidth, h: svg.clientHeight }
+    );
+    if (savedCamera && cameraFitsNotes) {
       view.tx = savedCamera.tx;
       view.ty = savedCamera.ty;
       view.scale = savedCamera.scale;
@@ -4209,6 +4819,9 @@ if (typeof document !== 'undefined') {
       selectNode: (id) => selectNode(typeof id === 'object' ? id.id : id),
       getSelectedNode: () => (ui.selected ? byId.get(ui.selected) || ui.selected : null),
       getPath: () => ui.path,
+      getRoutes: () => ui.paths,
+      surprise: surpriseMe,
+      centerOnFreeseOrigin,
       centerNode,
       render: renderBoard,
       snapshot: currentSnapshot,
@@ -4241,6 +4854,15 @@ if (typeof document !== 'undefined') {
         else { clampPan(); applyTransform(); persistCamera(false); }
       }, 120);
     });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      const faq = document.getElementById('faq-modal');
+      if (faq && !faq.hidden) {
+        closeFaqModal();
+        ev.preventDefault();
+      }
+    });
+
     const flushCamera = () => persistCamera(true);
     window.addEventListener('pagehide', flushCamera);
     document.addEventListener('visibilitychange', () => {
@@ -4264,10 +4886,18 @@ if (typeof module !== 'undefined' && module.exports) {
     freezeNodeCoordinates,
     freezeConnectedAffiliations,
     freezeBoardSnapshot,
+    freezeWorldCopy,
+    freezeCameraLooksAtNotes,
     freezeLocalShareUrl,
     freezeResolveNode,
     freezeDescribeHop,
     freezeHighlightPath,
+    freezeHighlightPaths,
+    freezeNodeClearance,
+    freezeAllShortestPaths,
+    freezeLowAccessNodes,
+    freezeAutoSortLayout,
+    FREESE_LOOSE_END_DEGREE,
     freezeJoshNode,
     freezeWikipediaSearchUrl,
     freezeDegreeRanks,

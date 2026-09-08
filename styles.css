@@ -1014,6 +1014,20 @@ body.settle-anim .node .note {
 .node.sel .lbl { fill: #140c08; }
 .node.sel .pin { fill: #e53935; }
 
+.node .loose-ring {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 2;
+  opacity: 0;
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.node.loose-end .loose-ring {
+  opacity: 1;
+  transform: scale(1.14);
+}
+
 .node.on-path .chip {
   stroke: #d32f2f;
   stroke-opacity: 0.9;
@@ -1400,6 +1414,43 @@ body.interactive-drag .node { cursor: grabbing; }
   font-size: 11.5px;
 }
 .ro-path-hops li { margin: 2px 0; }
+.ro-path-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.ro-path-toggle,
+.ro-route,
+#btn-faq,
+#btn-surprise,
+#faq-close {
+  min-height: 44px;
+  min-width: 44px;
+}
+#btn-loose-ends {
+  min-height: 44px;
+}
+.ro-routes {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.ro-routes li { margin: 4px 0; }
+.ro-route {
+  display: inline-flex;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  padding: 6px 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ro-route:hover { text-decoration: underline; }
+.ro-route.is-active { font-weight: 800; color: var(--ink); }
 
 .ro-tools {
   display: flex;
@@ -1605,6 +1656,8 @@ body.interactive-drag .node { cursor: grabbing; }
   .btn-ghost { padding: 7px 9px; }
   .btn-edit span,
   .btn-add span { display: none; }
+  #btn-faq,
+  #btn-surprise { padding: 7px 9px; font-size: 12px; }
   .btn-edit, .btn-add { padding: 7px 9px; }
   .badge-mode span { display: none; }
   .badge-mode { padding: 6px; border-radius: 50%; transform: none; }

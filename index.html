@@ -17,7 +17,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <div class="hub-actions">
-        <button id="btn-set-hub" class="btn-set-hub" type="button" hidden>See hops from this note</button>
+        <button id="btn-set-hub" class="btn-set-hub" type="button" hidden>Center board on this note</button>
         <button id="btn-reset-hub" class="btn-reset-hub" type="button" hidden>Reset to Josh</button>
       </div>
     </div>
@@ -29,6 +29,8 @@
 
     <div class="topbar-right">
       <span id="view-only-badge" class="badge-view-only" hidden>View only</span>
+      <button id="btn-faq" class="btn" type="button" title="FAQ" aria-label="FAQ">FAQ</button>
+      <button id="btn-surprise" class="btn" type="button" title="Surprise me" aria-label="Surprise me">Surprise me</button>
       <button id="btn-mode" class="btn btn-edit" type="button" aria-pressed="false" title="Edit board — move notes, add, yarn, reorganize">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 12.5 11.2 4.3l1.5 1.5L4.5 14H3v-1.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m10.6 3.6 1.5-1.5 1.5 1.5-1.5 1.5z" fill="currentColor"/></svg>
         <span id="mode-label">Edit board</span>
@@ -49,7 +51,11 @@
         <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
         <span class="toggle-label">Color by hops</span>
       </button>
-      <button id="btn-layout" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle Trad view vs Auto sort" title="Trad view keeps saved positions. Auto sort is display-only rings from Josh.">
+      <button id="btn-loose-ends" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Mark loose ends">
+        <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
+        <span class="toggle-label">Loose ends</span>
+      </button>
+      <button id="btn-layout" class="btn toggle" type="button" role="switch" aria-checked="false" aria-label="Toggle Trad view vs Auto sort" title="Trad view keeps saved positions. Auto sort is a display-only parent-orbit from Josh.">
         <span class="toggle-track" aria-hidden="true"><span class="toggle-knob"></span></span>
         <span class="toggle-label" id="layout-label">Trad view</span>
       </button>
@@ -181,6 +187,19 @@
         <ul id="suggestions-list" class="suggestions-list" aria-label="Saved suggestions"></ul>
         <div class="modal-actions modal-actions-end">
           <button type="button" class="btn" id="suggestions-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- FAQ (read-only stub) -->
+    <div class="modal" id="faq-modal" hidden>
+      <div class="modal-card">
+        <h2 class="modal-title">FAQ</h2>
+        <div id="faq-body">
+          <p class="modal-hint">FAQ landing soon. Traditionology will fill this in.</p>
+        </div>
+        <div class="modal-actions modal-actions-end">
+          <button type="button" class="btn" id="faq-close">Close</button>
         </div>
       </div>
     </div>
