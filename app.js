@@ -2878,21 +2878,20 @@ if (typeof document !== 'undefined') {
           : '') +
         '<div class="ro-meta">' +
         `<div class="cell"><b>${counts}</b><span>strings</span></div>` +
-        `<div class="cell"><b>${links.length}</b><span>related</span></div>` +
         '</div>' +
         '<section class="ro-path" data-freeze-path-section="true" aria-label="' + escapeHtml(pathTitle) + '">' +
         `<p class="ro-path-title">${escapeHtml(pathTitle)}</p>` +
         routeSetLinesHtml() +
-        `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
-        (pathDetails.hops.length
-          ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
-          : '') +
-        '</section>' +
         (links.length
           ? '<div class="ro-links" aria-label="Affiliations">' +
             links.map((l) => `<button class="ro-link" type="button" data-go="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
             '</div>'
           : '') +
+        `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
+        (pathDetails.hops.length
+          ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
+          : '') +
+        '</section>' +
         (ui.editing && connections.length
           ? '<ul class="ro-connections" aria-label="Edit yarn labels">' +
             connections.map((c) =>

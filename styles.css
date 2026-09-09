@@ -1305,21 +1305,24 @@ body.interactive-drag .node { cursor: grabbing; }
 }
 
 .ro-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  display: flex;
   margin: 0 0 10px;
 }
 .ro-meta .cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  width: auto;
   background: rgba(255, 255, 255, 0.45);
   border: 1px dashed var(--kraft-edge);
   border-radius: 2px;
-  padding: 6px 9px;
+  padding: 3px 8px;
 }
 .ro-meta .cell b {
-  display: block;
-  font-size: 15px;
+  display: inline;
+  font-size: 18px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
   font-family: var(--mono);
 }
@@ -1334,7 +1337,7 @@ body.interactive-drag .node { cursor: grabbing; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin: 6px 0 10px;
   max-height: 28vh;
   overflow: auto;
 }
