@@ -1414,13 +1414,6 @@ body.interactive-drag .node { cursor: grabbing; }
   font-size: 11.5px;
 }
 .ro-path-hops li { margin: 2px 0; }
-.ro-path-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 8px;
-}
-.ro-path-toggle,
 .ro-route,
 #btn-faq,
 #btn-surprise,

@@ -763,7 +763,6 @@ const FREESE_STORAGE_KEY = 'freese-index-board-v1';
 const FREESE_CHECKPOINT_KEY = 'freese-index-board-checkpoint-v1';
 const FREESE_CAMERA_KEY = 'freese-index-camera-v1';
 const FREESE_HOP_COLOR_KEY = 'freese-index-hop-color-v1';
-const FREESE_ALL_ROUTES_KEY = 'freese-index-all-routes-v1';
 const FREESE_LOOSE_ENDS_KEY = 'freese-index-loose-ends-v1';
 const FREESE_SUGGESTIONS_KEY = 'freese-index-suggestions-v1';
 
@@ -804,24 +803,6 @@ function freezeWriteHopColorPref(on) {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(FREESE_HOP_COLOR_KEY, on ? '1' : '0');
-  } catch (_) { /* ignore */ }
-}
-
-function freezeReadAllRoutesPref() {
-  if (typeof localStorage === 'undefined') return true;
-  try {
-    const raw = localStorage.getItem(FREESE_ALL_ROUTES_KEY);
-    if (raw == null) return true;
-    return raw === '1' || raw === 'true';
-  } catch (_) {
-    return true;
-  }
-}
-
-function freezeWriteAllRoutesPref(on) {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(FREESE_ALL_ROUTES_KEY, on ? '1' : '0');
   } catch (_) { /* ignore */ }
 }
 
@@ -1361,7 +1342,6 @@ if (typeof document !== 'undefined') {
       active: null,
       path: null,
       paths: null,
-      showAllRoutes: freezeReadAllRoutesPref(),
       looseEnds: freezeReadLooseEndsPref(),
       hubId: freezeJoshId(),
       traceTargetId: null,
@@ -1480,9 +1460,6 @@ if (typeof document !== 'undefined') {
     }
 
     function shownRoutePaths() {
-      if (ui.paths && ui.paths.showAll) {
-        return (ui.paths.paths || []).filter((path) => path && !path.disconnected);
-      }
       const one = revealedPath();
       return one ? [one] : [];
     }
@@ -1553,8 +1530,7 @@ if (typeof document !== 'undefined') {
     function startPathReveal() {
       cancelPathReveal();
       const edges = (ui.path && ui.path.edges) || [];
-      const showAll = !!(ui.paths && ui.paths.showAll);
-      if (showAll || !edges.length || prefersReducedMotion()) {
+      if (!edges.length || prefersReducedMotion()) {
         pathRevealCount = edges.length;
         paintRevealedPath();
         return;
@@ -2642,7 +2618,6 @@ if (typeof document !== 'undefined') {
       ui.paths = {
         target,
         paths: routes.length ? routes : [canonical],
-        showAll: !!ui.showAllRoutes,
         activeIndex: 0,
       };
       startPathReveal();
@@ -2760,11 +2735,7 @@ if (typeof document !== 'undefined') {
     function routeSetLinesHtml() {
       const routes = (ui.paths && ui.paths.paths) || (ui.path ? [ui.path] : []);
       if (!routes.length) return '';
-      const showAll = !!(ui.paths ? ui.paths.showAll : ui.showAllRoutes);
-      return '<div class="ro-path-toolbar">' +
-        `<button type="button" class="btn btn-ghost ro-path-toggle" data-routes-toggle aria-pressed="${showAll ? 'true' : 'false'}">${showAll ? 'All routes' : 'One route'}</button>` +
-        '</div>' +
-        '<ol class="ro-routes" aria-label="Routes to hub">' +
+      return '<ol class="ro-routes" aria-label="Routes to hub">' +
         routes.map((path, index) => {
           if (path.disconnected) {
             const fromName = freezeNodeName((path.nodes || [])[0]) || 'This note';
@@ -2773,7 +2744,7 @@ if (typeof document !== 'undefined') {
           }
           const names = (path.nodes || []).map(freezeNodeName).join(' → ');
           const hops = Math.max(0, (path.nodes || []).length - 1);
-          const active = !showAll && ui.paths && ui.paths.activeIndex === index;
+          const active = ui.paths && ui.paths.activeIndex === index;
           return `<li><button type="button" class="ro-route${active ? ' is-active' : ''}" data-route-index="${index}">${escapeHtml(names)} (${hops} hop${hops === 1 ? '' : 's'})</button></li>`;
         }).join('') +
         '</ol>';
@@ -2817,18 +2788,13 @@ if (typeof document !== 'undefined') {
       }
       const clearTraceBtn = readout.querySelector('[data-clear-trace]');
       if (clearTraceBtn) clearTraceBtn.addEventListener('click', () => setTraceTarget(null));
-      const routesToggle = readout.querySelector('[data-routes-toggle]');
-      if (routesToggle) {
-        routesToggle.addEventListener('click', () => setShowAllRoutes(!ui.showAllRoutes));
-      }
       for (const b of readout.querySelectorAll('[data-route-index]')) {
         b.addEventListener('click', () => {
           const idx = Number(b.getAttribute('data-route-index'));
           if (!ui.paths || !ui.paths.paths[idx]) return;
           ui.paths.activeIndex = idx;
           ui.path = ui.paths.paths[idx];
-          if (!ui.paths.showAll) startPathReveal();
-          else paintRevealedPath();
+          startPathReveal();
           updateReadout(ui.selected);
         });
       }
@@ -3797,14 +3763,6 @@ if (typeof document !== 'undefined') {
 
     function toggleLooseEnds() {
       setLooseEnds(!ui.looseEnds);
-    }
-
-    function setShowAllRoutes(on) {
-      ui.showAllRoutes = !!on;
-      freezeWriteAllRoutesPref(ui.showAllRoutes);
-      if (ui.paths) ui.paths.showAll = ui.showAllRoutes;
-      startPathReveal();
-      updateReadout(ui.selected);
     }
 
     function isJoshNode(node) {
