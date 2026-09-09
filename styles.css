@@ -1337,7 +1337,7 @@ body.interactive-drag .node { cursor: grabbing; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 6px 0 10px;
+  margin: 0 0 10px;
   max-height: 28vh;
   overflow: auto;
 }

@@ -53,6 +53,7 @@ function freezeNodeBlurb(node) {
   const raw = freezeNodeText(node && (node.blurb ?? node.summary ?? node.description ?? node.bio));
   // Import boilerplate mentioned "Traditionology" on ~every note — that poisoned search.
   if (/^imported from traditionology/i.test(raw)) return '';
+  if (/^posted in edit mode\.?$/i.test(raw.trim())) return '';
   return raw;
 }
 
@@ -2834,10 +2835,10 @@ if (typeof document !== 'undefined') {
       }
       const n = byId.get(id);
       if (!n) { updateReadout(null); return; }
-      const type = TYPES[n.type] || TYPES.yellow;
       const links = neighborButtons(id);
       const connections = connectionLines(id);
       const counts = n.neighbors.length;
+      const blurb = freezeNodeBlurb(n);
       const pathDetails = freezePathSummary(n, graphModel, ui.path);
       const attachments = Array.isArray(n.attachments) ? n.attachments.filter((a) => a && (a.url || a.label)) : [];
       const hops = hopDistanceFor(id);
@@ -2861,11 +2862,10 @@ if (typeof document !== 'undefined') {
         '<p class="ro-kicker">' + (ui.selected === id ? 'Selected subject' : 'Subject') + '</p>' +
         `<h2>${escapeHtml(n.name)}</h2>` +
         `<p class="ro-role">${escapeHtml(n.role || '')}</p>` +
-        `<span class="typechip"><i style="background:${type.color}"></i>${escapeHtml(type.label)}</span>` +
         (ui.hopColor
           ? `<span class="ro-hopchip"><i style="background:${freezeHopPaper(hops)}"></i>${escapeHtml(hopLabel)}</span>`
           : '') +
-        `<p class="ro-blurb">${escapeHtml(n.blurb || '')}</p>` +
+        (blurb ? `<p class="ro-blurb">${escapeHtml(blurb)}</p>` : '') +
         (attachments.length
           ? '<ul class="ro-attachments" aria-label="Attachments">' +
             attachments.map((a) => {
@@ -2879,14 +2879,14 @@ if (typeof document !== 'undefined') {
         '<div class="ro-meta">' +
         `<div class="cell"><b>${counts}</b><span>strings</span></div>` +
         '</div>' +
-        '<section class="ro-path" data-freeze-path-section="true" aria-label="' + escapeHtml(pathTitle) + '">' +
-        `<p class="ro-path-title">${escapeHtml(pathTitle)}</p>` +
-        routeSetLinesHtml() +
         (links.length
           ? '<div class="ro-links" aria-label="Affiliations">' +
             links.map((l) => `<button class="ro-link" type="button" data-go="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
             '</div>'
           : '') +
+        '<section class="ro-path" data-freeze-path-section="true" aria-label="' + escapeHtml(pathTitle) + '">' +
+        `<p class="ro-path-title">${escapeHtml(pathTitle)}</p>` +
+        routeSetLinesHtml() +
         `<p class="ro-path-summary">${escapeHtml(pathDetails.summary)}</p>` +
         (pathDetails.hops.length
           ? '<ul class="ro-path-hops">' + pathDetails.hops.map((hop) => `<li>${escapeHtml(hop)}</li>`).join('') + '</ul>'
