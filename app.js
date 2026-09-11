@@ -317,19 +317,8 @@ function freezeShortestPath(model, start, target) {
 
 const FREESE_LOOSE_END_DEGREE = 5;
 const FREESE_MAX_SHORTEST_PATHS = 16;
-const FREESE_CLEARANCE_ORIGIN = 200;
-const FREESE_CLEARANCE_FLOOR = 36;
-const FREESE_CLEARANCE_CAP = 200;
-
-function freezeNodeClearance(hops, degree) {
-  if (hops === 0) return FREESE_CLEARANCE_ORIGIN;
-  const deg = Number.isFinite(degree) ? degree : 0;
-  const dist = Number.isFinite(hops) ? hops : 99;
-  return Math.min(
-    FREESE_CLEARANCE_CAP,
-    Math.max(FREESE_CLEARANCE_FLOOR, 100 - dist * 10 + deg * 2)
-  );
-}
+const FREESE_RING_BASE = 160;
+const FREESE_RING_STEP = 210;
 
 function freezeLowAccessNodes(model, threshold) {
   const cut = Number.isFinite(threshold) ? threshold : FREESE_LOOSE_END_DEGREE;
@@ -419,145 +408,58 @@ function freezeAutoSortLayout(nodes, edges, joshId) {
 
   const originId = freezeNodeId(josh);
   const dist = new Map([[originId, 0]]);
-  const parentOf = new Map([[originId, null]]);
-  const childrenOf = new Map();
   const queue = [originId];
-
-  const namedNeighbors = (id) => (model.adjacency.get(id) || []).slice().sort((a, b) => {
-    const left = freezeNodeName(model.byId.get(a.id)) || a.id;
-    const right = freezeNodeName(model.byId.get(b.id)) || b.id;
-    return left.localeCompare(right);
-  });
-
   while (queue.length) {
     const current = queue.shift();
     const here = dist.get(current);
-    for (const { id: other } of namedNeighbors(current)) {
+    for (const { id: other } of (model.adjacency.get(current) || [])) {
       if (dist.has(other)) continue;
       dist.set(other, here + 1);
-      parentOf.set(other, current);
-      if (!childrenOf.has(current)) childrenOf.set(current, []);
-      childrenOf.get(current).push(other);
       queue.push(other);
     }
   }
 
-  for (const [parentId, kids] of childrenOf) {
-    kids.sort((a, b) => {
-      const left = freezeNodeName(model.byId.get(a)) || a;
-      const right = freezeNodeName(model.byId.get(b)) || b;
-      return left.localeCompare(right);
-    });
-    childrenOf.set(parentId, kids);
-  }
-
-  const degreeOf = (id) => (model.adjacency.get(id) || []).length;
   const hopsOf = (id) => (dist.has(id) ? dist.get(id) : 99);
-  const clearanceOf = (id) => freezeNodeClearance(hopsOf(id), degreeOf(id));
+  const nameOf = (id) => freezeNodeName(model.byId.get(id)) || id;
+
+  const rings = new Map();
+  for (const node of model.nodes) {
+    const id = freezeNodeId(node);
+    const hops = hopsOf(id);
+    if (!rings.has(hops)) rings.set(hops, []);
+    rings.get(hops).push(id);
+  }
 
   positions.set(originId, { x: 0, y: 0 });
 
-  const placeChildren = (parentId) => {
-    const kids = childrenOf.get(parentId) || [];
-    if (!kids.length) return;
-    const parentPos = positions.get(parentId);
-    const childClearances = kids.map(clearanceOf);
-    const maxChild = Math.max.apply(null, childClearances);
-    const avgChild = childClearances.reduce((sum, value) => sum + value, 0) / childClearances.length;
-    const orbit = Math.max(
-      clearanceOf(parentId) + maxChild,
-      (kids.length * 2 * avgChild) / (2 * Math.PI)
-    );
-    const grandId = parentOf.get(parentId);
-    let startAngle = -Math.PI / 2;
-    if (grandId) {
-      const grandPos = positions.get(grandId);
-      startAngle = Math.atan2(parentPos.y - grandPos.y, parentPos.x - grandPos.x);
-    }
-    kids.forEach((kid, index) => {
-      const angle = startAngle + (Math.PI * 2 * index) / kids.length;
-      positions.set(kid, {
-        x: parentPos.x + Math.cos(angle) * orbit,
-        y: parentPos.y + Math.sin(angle) * orbit,
+  const hopKeys = Array.from(rings.keys())
+    .filter((hops) => hops > 0 && hops < 99)
+    .sort((a, b) => a - b);
+  let lastR = 0;
+  for (let r = 0; r < hopKeys.length; r += 1) {
+    const hops = hopKeys[r];
+    const members = rings.get(hops).slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    const radius = Math.max(FREESE_RING_BASE + hops * FREESE_RING_STEP, lastR + FREESE_RING_STEP);
+    lastR = radius;
+    members.forEach((id, index) => {
+      const angle = (Math.PI * 2 * index) / members.length - Math.PI / 2;
+      positions.set(id, {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
       });
     });
-    kids.forEach(placeChildren);
-  };
-  placeChildren(originId);
-
-  const disconnected = [];
-  for (const node of model.nodes) {
-    const id = freezeNodeId(node);
-    if (!positions.has(id)) disconnected.push(id);
   }
+
+  const disconnected = (rings.get(99) || []).slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
   if (disconnected.length) {
-    let maxR = 0;
-    positions.forEach((point) => {
-      maxR = Math.max(maxR, Math.hypot(point.x, point.y));
-    });
-    const farR = maxR + 480 + freezeNodeClearance(99, 0) * 2;
-    disconnected.sort((a, b) => {
-      const left = freezeNodeName(model.byId.get(a)) || a;
-      const right = freezeNodeName(model.byId.get(b)) || b;
-      return left.localeCompare(right);
-    });
+    const farR = lastR + 480 + FREESE_RING_STEP;
     disconnected.forEach((id, index) => {
       const angle = (Math.PI * 2 * index) / disconnected.length - Math.PI / 2;
       positions.set(id, { x: Math.cos(angle) * farR, y: Math.sin(angle) * farR });
     });
   }
 
-  const ids = Array.from(positions.keys());
-  for (let pass = 0; pass < 8; pass += 1) {
-    for (let i = 0; i < ids.length; i += 1) {
-      for (let j = i + 1; j < ids.length; j += 1) {
-        const a = ids[i];
-        const b = ids[j];
-        const pa = positions.get(a);
-        const pb = positions.get(b);
-        let dx = pa.x - pb.x;
-        let dy = pa.y - pb.y;
-        let gap = Math.hypot(dx, dy);
-        const need = clearanceOf(a) + clearanceOf(b);
-        if (gap >= need) continue;
-        if (gap < 0.001) {
-          dx = 0.001;
-          dy = 0;
-          gap = 0.001;
-        }
-        const push = (need - gap) * 0.28;
-        const ux = dx / gap;
-        const uy = dy / gap;
-        if (a !== originId) {
-          pa.x += ux * push;
-          pa.y += uy * push;
-        }
-        if (b !== originId) {
-          pb.x -= ux * push;
-          pb.y -= uy * push;
-        }
-      }
-    }
-  }
-
   positions.set(originId, { x: 0, y: 0 });
-  const originClearance = clearanceOf(originId);
-  (childrenOf.get(originId) || []).forEach((kid) => {
-    const point = positions.get(kid);
-    const need = originClearance + clearanceOf(kid);
-    const gap = Math.hypot(point.x, point.y);
-    if (gap < 0.001) {
-      point.x = 0;
-      point.y = -need;
-      return;
-    }
-    if (gap < need) {
-      const scale = need / gap;
-      point.x *= scale;
-      point.y *= scale;
-    }
-  });
-
   return { positions, origin };
 }
 
@@ -3644,7 +3546,7 @@ if (typeof document !== 'undefined') {
         renderLabels();
         applyHopColorsToDom();
         centerOnFreeseOrigin();
-        showToast('Auto sort — display-only parent-orbit from Josh (Trad positions kept).');
+        showToast('Auto sort — hop rings from Josh at 100% (real sticky size). Trad positions kept.');
       } else {
         if (tradLayoutSnapshot) applyPositionList(tradLayoutSnapshot);
         if (tradWorldSnapshot) {
@@ -4108,7 +4010,7 @@ if (typeof document !== 'undefined') {
 
     function reorganizeAroundJosh() {
       if (ui.viewOnly) {
-        showToast('View-only — use Auto sort for a display-only parent-orbit layout.');
+        showToast('View-only — use Auto sort for a display-only hop-ring layout.');
         return;
       }
       if (!window.confirm(
@@ -4442,6 +4344,7 @@ if (typeof document !== 'undefined') {
     document.getElementById('btn-zoom-out').addEventListener('click', () => {
       zoomAt(svg.clientWidth / 2, svg.clientHeight / 2, 1 / 1.3); view.fitted = true;
     });
+    if (zoomPct) zoomPct.addEventListener('click', resetZoomToActualSize);
     document.getElementById('btn-fit').addEventListener('click', () => { fitView(true); view.fitted = true; });
     const addBtn = document.getElementById('btn-add-note');
     if (addBtn) addBtn.addEventListener('click', startAddNote);
@@ -4668,8 +4571,17 @@ if (typeof document !== 'undefined') {
       persistCamera(false);
     }
 
+    function resetZoomToActualSize() {
+      const cw = svg.clientWidth || 0;
+      const ch = svg.clientHeight || 0;
+      if (!cw || !ch || view.scale === 1) return;
+      zoomAt(cw / 2, ch / 2, 1 / view.scale);
+      view.fitted = true;
+    }
+
     function centerOnFreeseOrigin() {
       if (ui.layoutMode === 'auto') {
+        view.scale = 1;
         centerWorld(0, 0);
         return;
       }
@@ -4850,7 +4762,8 @@ if (typeof module !== 'undefined' && module.exports) {
     freezeDescribeHop,
     freezeHighlightPath,
     freezeHighlightPaths,
-    freezeNodeClearance,
+    FREESE_RING_BASE,
+    FREESE_RING_STEP,
     freezeAllShortestPaths,
     freezeLowAccessNodes,
     freezeAutoSortLayout,

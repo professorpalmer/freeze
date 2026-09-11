@@ -1202,15 +1202,30 @@ body.interactive-drag .node { cursor: grabbing; }
 }
 
 .zoom-pct {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--muted);
   padding: 2px 0;
   min-width: 42px;
   text-align: center;
+  border: 0;
   border-top: 1px dashed var(--kraft-edge);
   border-bottom: 1px dashed var(--kraft-edge);
   margin: 2px 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.zoom-pct:hover {
+  color: var(--ink);
+  background: rgba(198, 40, 40, 0.1);
+}
+.zoom-pct:focus-visible {
+  outline: 2px solid var(--ink-soft);
+  outline-offset: 2px;
 }
 
 /* ============================================================================

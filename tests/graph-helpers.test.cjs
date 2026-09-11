@@ -4,20 +4,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const app = require('../app.js');
 
-test('freezeNodeClearance: Josh hub is 200', () => {
-  assert.equal(app.freezeNodeClearance(0, 80), 200);
-  assert.equal(app.freezeNodeClearance(0, 0), 200);
-});
-
-test('freezeNodeClearance: travis-like hops=1 deg=48 is 186', () => {
-  assert.equal(app.freezeNodeClearance(1, 48), 186);
-});
-
-test('freezeNodeClearance: floor 36 and cap 200', () => {
-  assert.equal(app.freezeNodeClearance(10, 0), 36);
-  assert.equal(app.freezeNodeClearance(1, 120), 200);
-});
-
 test('freezeAllShortestPaths: two equal-length routes', () => {
   const nodes = [
     { id: 'josh', name: 'Josh Freese' },
@@ -73,24 +59,50 @@ test('freezeLowAccessNodes: excludes Josh and high-degree notes', () => {
   assert.equal(app.FREESE_LOOSE_END_DEGREE, 5);
 });
 
-test('freezeAutoSortLayout: Josh at 0,0 and child sits past clearance sum', () => {
+test('freezeAutoSortLayout: Josh at 0,0 and farther hops sit outside', () => {
   const nodes = [
     { id: 'josh', name: 'Josh Freese', w: 80, h: 40 },
     { id: 'kid', name: 'Travis Barker', w: 90, h: 28 },
+    { id: 'outer', name: 'Outer Note', w: 80, h: 28 },
   ];
-  const edges = [{ id: 'e', from: 'josh', to: 'kid' }];
+  const edges = [
+    { id: 'e1', from: 'josh', to: 'kid' },
+    { id: 'e2', from: 'kid', to: 'outer' },
+  ];
   const result = app.freezeAutoSortLayout(nodes, edges, 'josh');
   const origin = result.positions.get('josh');
   const child = result.positions.get('kid');
+  const outer = result.positions.get('outer');
   assert.ok(origin);
   assert.ok(child);
-  assert.equal(result.origin.x, 0);
-  assert.equal(result.origin.y, 0);
+  assert.ok(outer);
   assert.equal(origin.x, 0);
   assert.equal(origin.y, 0);
-  const need = app.freezeNodeClearance(0, 1) + app.freezeNodeClearance(1, 1);
-  const dist = Math.hypot(child.x - origin.x, child.y - origin.y);
-  assert.ok(dist >= need - 1, `child distance ${dist} should be >= ${need - 1}`);
+  const r1 = Math.hypot(child.x, child.y);
+  const r2 = Math.hypot(outer.x, outer.y);
+  const hop1 = app.FREESE_RING_BASE + app.FREESE_RING_STEP;
+  assert.ok(r1 >= hop1 - 1, `hop-1 radius ${r1} should be >= ${hop1}`);
+  assert.ok(r2 > r1, `hop-2 radius ${r2} should be outside hop-1 ${r1}`);
+});
+
+test('freezeAutoSortLayout: hop-1 siblings share one ring', () => {
+  const nodes = [{ id: 'josh', name: 'Josh Freese', w: 80, h: 40 }];
+  const edges = [];
+  for (let i = 0; i < 30; i += 1) {
+    const id = `n${String(i).padStart(2, '0')}`;
+    nodes.push({ id, name: `Note ${id}`, w: 80, h: 28 });
+    edges.push({ from: 'josh', to: id });
+  }
+  const result = app.freezeAutoSortLayout(nodes, edges, 'josh');
+  const hop1 = app.FREESE_RING_BASE + app.FREESE_RING_STEP;
+  for (let i = 0; i < 30; i += 1) {
+    const id = `n${String(i).padStart(2, '0')}`;
+    const point = result.positions.get(id);
+    const r = Math.hypot(point.x, point.y);
+    assert.ok(Math.abs(r - hop1) < 1, `${id} radius ${r} should be ${hop1}`);
+  }
+  assert.equal(result.positions.get('josh').x, 0);
+  assert.equal(result.positions.get('josh').y, 0);
 });
 
 test('freezeBoardSnapshot copies world so later mutation does not leak', () => {
